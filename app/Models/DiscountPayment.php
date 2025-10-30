@@ -23,9 +23,9 @@ class DiscountPayment extends Model
         'deleted_at'
     ];
 
-    public function payroll()
+    public function payRoll()
     {
-        return $this->belongsTo(PayRoll::class);
+        return $this->belongsTo(PayRoll::class, 'pay_roll_id');
     }
 
     public function discountType()

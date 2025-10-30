@@ -15,10 +15,12 @@ class DiscountPaymentController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'payroll_id' => 'required|exists:pay_rolls,id',
+            'pay_roll_id' => 'required|exists:pay_rolls,id', // ← CORREGIDO: 'pay_roll_id'
             'discount_type_id' => 'required|exists:discount_types,id',
             'amount' => 'required|numeric',
-            'status_code' => 'nullable|string|max:20',
+            'quantity' => 'sometimes|numeric',
+            'biweek' => 'sometimes|numeric', 
+            'pay_card' => 'sometimes|boolean'
         ]);
 
         $discountPayment = DiscountPayment::create($validated);
@@ -38,10 +40,12 @@ class DiscountPaymentController extends Controller
         if (!$discountPayment) return response()->json(['message' => 'Not found'], 404);
 
         $validated = $request->validate([
-            'payroll_id' => 'sometimes|required|exists:pay_rolls,id',
+            'pay_roll_id' => 'sometimes|required|exists:pay_rolls,id', // ← CORREGIDO
             'discount_type_id' => 'sometimes|required|exists:discount_types,id',
             'amount' => 'sometimes|required|numeric',
-            'status_code' => 'nullable|string|max:20',
+            'quantity' => 'sometimes|numeric',
+            'biweek' => 'sometimes|numeric',
+            'pay_card' => 'sometimes|boolean'
         ]);
 
         $discountPayment->update($validated);

@@ -39,16 +39,21 @@ class Employee extends Model
         return $this->hasMany(PayRoll::class);
     }
 
-    public function employeeAffiliations() {
+    public function employeeAffiliations()
+    {
         return $this->hasMany(EmployeeAffiliation::class);
     }
 
-    public function contracts() {
+    public function contracts()
+    {
         return $this->hasMany(Contract::class);
     }
 
+    // En app/Models/Employee.php
     public function activeContract()
     {
-        return $this->contracts()->where('status_code', 'enable')->first();
+        return $this->hasOne(Contract::class)
+            ->where('status_code', 'active')
+            ->latest(); // O ->where('status_code', 'active')->first()
     }
 }

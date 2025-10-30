@@ -2,7 +2,6 @@
 
 namespace App\Architecture\Application\Services;
 
-use App\Architecture\Domain\Models\UseCases\IBiweeklyUseCase;
 use App\Architecture\Infrastructure\Repositories\BiweeklyPaymentRepository;
 
 class BiweeklyPaymentService
@@ -10,7 +9,7 @@ class BiweeklyPaymentService
     public function __construct(protected BiweeklyPaymentRepository $biweeklyPaymentRepository) {}
 
     public function create($request) {
-        return $this->biweeklyPaymentRepository->create($request);
+        return $this->biweeklyPaymentRepository->create($request->all());
     }
 
     public function createForAllEmployees() {

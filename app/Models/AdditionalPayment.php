@@ -25,7 +25,7 @@ class AdditionalPayment extends Model
 
     public function payRoll()
     {
-        return $this->belongsTo(PayRoll::class);
+        return $this->belongsTo(PayRoll::class, 'pay_roll_id');
     }
 
     public function paymentType() {

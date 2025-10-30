@@ -22,10 +22,7 @@ class PayRollRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'employee' => 'required|string',
-            'pay_date' => 'required|date',
-            'additionalPayments' => 'array',
-            'discountPayments' => 'array',
+            'employee' => 'required|string|exists:employees,dni'
         ];
     }
 }

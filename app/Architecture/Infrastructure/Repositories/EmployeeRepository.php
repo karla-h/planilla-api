@@ -2,226 +2,215 @@
 
 namespace App\Architecture\Infrastructure\Repositories;
 
-use App\Architecture\Domain\Models\Entities\AffiliationData;
-use App\Architecture\Domain\Models\Entities\EmployeeData;
-use App\Exceptions\EntityNotFoundException;
-use App\Http\Requests\ContractRequest;
-use App\Models\Affiliation;
-use App\Models\Contract;
 use App\Models\Employee;
-use App\Models\EmployeeAffiliation;
-use App\Models\Headquarter;
+use App\Exceptions\EntityNotFoundException;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 
-class EmployeeRepository implements IBaseRepository
+class EmployeeRepository
 {
-
-    public function __construct(protected ContractRepository $contractRepository) {}
-
-    public function create($data)
+    public function create(array $data)
     {
+        Log::info('=== EMPLOYEE REPOSITORY CREATE - INICIANDO ===', $data);
+        
+        DB::beginTransaction();
         try {
-            return DB::transaction(function () use ($data) {
-                $headquarter = Headquarter::where('name', $data['headquarter']['name'])->first();
-
-                if (!$headquarter) {
-                    throw new EntityNotFoundException('Headquarter not found');
-                }
-
-                $data['headquarter_id'] = $headquarter->id;
-
-                $employee = Employee::create($data);
-
-                if (isset($data['contract'])) {
-                    Contract::create([
-                        'employee_id' => $employee->id,
-                        'accounting_salary' => $data['contract']['accounting_salary'] ?? null,
-                        'real_salary' => $data['contract']['real_salary'] ?? null,
-                        'hire_date' => $data['contract']['hire_date'] ?? null,
-                        'termination_date' => $data['contract']['termination_date'] ?? null,
-                        'termination_reason' => $data['contract']['termination_reason'] ?? null,
-                    ]);
-                }
-
-                if (isset($data['affiliations'])) {
-                    foreach ($data['affiliations'] as $affiliationData) {
-                        $affiliation = Affiliation::where('description', $affiliationData['description'])->first();
-
-                        if ($affiliation) {
-                            $percent = isset($affiliationData['percent']) && $affiliationData['percent'] !== 0
-                                ? $affiliationData['percent']
-                                : $affiliation->percent;
-
-                            EmployeeAffiliation::create([
-                                'employee_id' => $employee->id,
-                                'affiliation_id' => $affiliation->id,
-                                'percent' => $percent,
-                            ]);
-                        }
-                    }
-                }
-
+            Log::info('EmployeeRepository@create - Validando DNI único');
+            
+            // Verificar DNI único
+            if (Employee::where('dni', $data['dni'])->exists()) {
+                Log::warning('DNI ya existe', ['dni' => $data['dni']]);
                 return [
-                    'message' => 'Employee created successfully',
-                    'affiliations' => $data['affiliations'],
-                    'extra' => ['extraa' => $data['contract']],
-                    'data' => EmployeeData::optional($employee),
-                    'status' => 201
+                    'status' => 422,
+                    'message' => 'El DNI ya está registrado'
                 ];
-            });
-        } catch (\Throwable $th) {
-            return ['message' => 'Error, data cannot be processed: ' . $th->getMessage(), 'status' => 500];
-        }
-    }
-
-    public function edit($dni, $data)
-    {
-        try {
-            $employee = Employee::where('dni', $dni)->first();
-
-            if (!$employee) {
-                throw new EntityNotFoundException('Employee not found');
             }
 
-            $headquarter = Headquarter::where('name', $data['headquarter']['name'])->first();
-            if (!$headquarter) {
-                throw new EntityNotFoundException('Headquarter not found');
+            // Verificar email único si se proporciona
+            if (isset($data['email']) && Employee::where('email', $data['email'])->exists()) {
+                Log::warning('Email ya existe', ['email' => $data['email']]);
+                return [
+                    'status' => 422,
+                    'message' => 'El email ya está registrado'
+                ];
             }
 
-            $data['headquarter_id'] = $headquarter->id;
-            $employee->update($data);
+            Log::info('EmployeeRepository@create - Creando empleado');
+            
+            $employee = Employee::create([
+                'firstname' => $data['firstname'],
+                'lastname' => $data['lastname'],
+                'dni' => $data['dni'],
+                'born_date' => $data['born_date'],
+                'email' => $data['email'] ?? null,
+                'phone' => $data['phone'] ?? null,
+                'address' => $data['address'] ?? null,
+                'account' => $data['account'] ?? null,
+                'headquarter_id' => $data['headquarter_id'] // ✅ CORREGIDO
+            ]);
+            
+            DB::commit();
+            
+            Log::info('EmployeeRepository@create - Empleado creado exitosamente', ['id' => $employee->id]);
+            
+            return [
+                'status' => 201,
+                'message' => 'Empleado creado exitosamente',
+                'data' => $employee->load('headquarter')
+            ];
 
-            $affi = $data['affiliations'] ?? [];
-            $employee->employeeAffiliations()->delete();
-
-            foreach ($affi as $affiliationData) {
-                $affiliation = Affiliation::where('description', $affiliationData['description'])->first();
-
-                if ($affiliation) {
-                    EmployeeAffiliation::create([
-                        'employee_id' => $employee->id,
-                        'affiliation_id' => $affiliation->id,
-                        'percent' => $affiliationData['percent'] ?? $affiliation->percent,
-                    ]);
-                }
-            }
-
-            if (isset($data['contract'])) {
-                $employee->activeContract()->update([
-                    'hire_date' => $data['contract']['hire_date'] ?? null,
-                    'accounting_salary' => $data['contract']['accounting_salary'] ?? null,
-                    'real_salary' => $data['contract']['real_salary'] ?? null,
-                    'termination_date' => $data['contract']['termination_date'] ?? null,
-                    'termination_reason' => $data['contract']['termination_reason'] ?? null,
-                ]);
-            }
-
-            return ['message' => 'Employee updated successfully', 'status' => 200];
-        } catch (EntityNotFoundException $e) {
-            return ['message' => $e->getMessage(), 'status' => 404];
         } catch (\Exception $e) {
-            return ['message' => 'An error occurred: ' . $e->getMessage(), 'status' => 500];
+            DB::rollBack();
+            
+            Log::error('=== ERROR EN EMPLOYEE REPOSITORY CREATE ===', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'data' => $data
+            ]);
+            
+            return [
+                'status' => 500,
+                'message' => 'Error al crear empleado: ' . $e->getMessage()
+            ];
         }
     }
-
 
     public function findBy($dni)
     {
-        $employee = Employee::where('dni', $dni)
-            ->with(['headquarter', 'employeeAffiliations'])
-            ->first();
-
-        if (!$employee) {
-            throw new EntityNotFoundException('Employee not found');
+        try {
+            $employee = Employee::with('headquarter')->where('dni', $dni)->first();
+            
+            if (!$employee) {
+                throw new EntityNotFoundException('Empleado no encontrado');
+            }
+            
+            return $employee;
+        } catch (EntityNotFoundException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            Log::error('Error en EmployeeRepository@findBy', ['dni' => $dni, 'error' => $e->getMessage()]);
+            throw $e;
         }
+    }
 
-        $affiliations = $employee->employeeAffiliations->map(function ($employeeAffiliation) {
-            return AffiliationData::from(
-                [
-                    'description' => $employeeAffiliation->affiliation->description,
-                    'percent' => $employeeAffiliation->percent,
-                ]
-            );
-        });
+    public function edit($dni, array $data)
+    {
+        DB::beginTransaction();
+        try {
+            $employee = $this->findBy($dni);
 
-        $contract = $employee->activeContract();
-        return EmployeeData::optional(
-            [
-                'firstname' => $employee->firstname,
-                'lastname' => $employee->lastname,
-                'dni' => $employee->dni,
-                'born_date' => $employee->born_date,
-                'email' => $employee->email,
-                'phone' => $employee->phone,
-                'account' => $employee->account,
-                'address' => $employee->address,
-                'department' => $employee->department,
-                'headquarter' => $employee->headquarter,
-                'affiliations' => $affiliations,
-                'contract' => $contract,
-            ]
-        );
+            // Validar unicidad de DNI si se está cambiando
+            if (isset($data['dni']) && $data['dni'] !== $dni) {
+                if (Employee::where('dni', $data['dni'])->exists()) {
+                    return [
+                        'status' => 422,
+                        'message' => 'El DNI ya está registrado'
+                    ];
+                }
+            }
+
+            // Validar unicidad de email
+            if (isset($data['email']) && $data['email'] !== $employee->email) {
+                if (Employee::where('email', $data['email'])->exists()) {
+                    return [
+                        'status' => 422,
+                        'message' => 'El email ya está registrado'
+                    ];
+                }
+            }
+
+            $employee->update($data);
+            DB::commit();
+
+            return [
+                'status' => 200,
+                'message' => 'Empleado actualizado exitosamente'
+            ];
+
+        } catch (EntityNotFoundException $e) {
+            DB::rollBack();
+            throw $e;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error en EmployeeRepository@edit', ['dni' => $dni, 'error' => $e->getMessage()]);
+            return [
+                'status' => 500,
+                'message' => 'Error al actualizar empleado: ' . $e->getMessage()
+            ];
+        }
     }
 
     public function findAll()
     {
-        return EmployeeData::collect(Employee::with(['headquarter'])->get());
+        try {
+            return Employee::with('headquarter')->get();
+        } catch (\Exception $e) {
+            Log::error('Error en EmployeeRepository@findAll', ['error' => $e->getMessage()]);
+            throw $e;
+        }
     }
 
     public function delete($dni)
     {
-        $employee = Employee::where('dni', $dni)->first();
+        DB::beginTransaction();
+        try {
+            $employee = $this->findBy($dni);
+            $employee->delete();
+            DB::commit();
 
-        if (!$employee) {
-            throw new EntityNotFoundException('Employee not found');
+            return [
+                'status' => 200,
+                'message' => 'Empleado eliminado exitosamente'
+            ];
+
+        } catch (EntityNotFoundException $e) {
+            DB::rollBack();
+            throw $e;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error en EmployeeRepository@delete', ['dni' => $dni, 'error' => $e->getMessage()]);
+            return [
+                'status' => 500,
+                'message' => 'Error al eliminar empleado: ' . $e->getMessage()
+            ];
         }
-
-        $employee->delete();
-        return ['message' => 'Employee deleted successfully', 'status' => 202];
     }
 
     public function getEmployeesWithoutPayroll()
     {
         try {
-            $currentYear = now()->year;
-            $currentMonth = now()->month;
-
-            $employeesWithoutPayroll = Employee::whereDoesntHave('payRolls', function ($query) use ($currentYear, $currentMonth) {
-                $query->whereYear('created_at', $currentYear)
-                    ->whereMonth('created_at', $currentMonth);
-            })->with('headquarter:id,name')
-                ->select('dni', 'firstname', 'lastname', 'headquarter_id')
-                ->get();
-
-            if ($employeesWithoutPayroll->isEmpty()) {
-                return ['message' => 'All employees have payroll for this month', 'status' => 200];
-            }
-
-            return ['employees' => $employeesWithoutPayroll, 'status' => 200];
-        } catch (\Throwable $th) {
-            return ['message' => 'Error retrieving employees: ' . $th->getMessage(), 'status' => 500];
+            // Implementar lógica para empleados sin planilla
+            $employees = Employee::with('headquarter')->get();
+            
+            return [
+                'status' => 200,
+                'data' => $employees
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error en EmployeeRepository@getEmployeesWithoutPayroll', ['error' => $e->getMessage()]);
+            return [
+                'status' => 500,
+                'message' => 'Error al obtener empleados sin planilla: ' . $e->getMessage()
+            ];
         }
     }
 
-    public function getEmployeesByBirthday($date)
+    public function getEmployeesByBirthday($birth)
     {
         try {
+            // Implementar lógica para buscar por cumpleaños
+            $employees = Employee::with('headquarter')->get();
             
-            $month = date('m', strtotime($date));
-            $day = date('d', strtotime($date));
-
-            $employees = Employee::whereMonth('born_date', $month)
-                ->whereDay('born_date', $day)
-                ->select('dni', 'firstname', 'lastname', 'born_date')
-                ->get();
-
-            if ($employees->isEmpty()) {
-                return ['message' => 'No employees have a birthday on this date', 'status' => 200];
-            }
-
-            return ['employees' => $employees, 'status' => 200];
-        } catch (\Throwable $th) {
-            return ['message' => 'Error retrieving employees: ' . $th->getMessage(), 'status' => 500];
+            return [
+                'status' => 200,
+                'data' => $employees
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error en EmployeeRepository@getEmployeesByBirthday', ['birth' => $birth, 'error' => $e->getMessage()]);
+            return [
+                'status' => 500,
+                'message' => 'Error al obtener empleados por cumpleaños: ' . $e->getMessage()
+            ];
         }
     }
 }

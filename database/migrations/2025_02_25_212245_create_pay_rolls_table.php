@@ -16,6 +16,9 @@ return new class extends Migration
             $table->decimal('accounting_salary', 8, 2);
             $table->decimal('real_salary', 8, 2);
             $table->foreignId('employee_id')->constrained();
+            $table->enum('status', ['draft', 'open', 'partial', 'closed', 'paid'])->default('draft');
+            $table->date('period_start');
+            $table->date('period_end');
             $table->softDeletes();
             $table->timestamps();
         });

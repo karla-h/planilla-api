@@ -2,16 +2,22 @@
 
 namespace App\Architecture\Infrastructure\Repositories;
 
-use App\Architecture\Domain\Models\Entities\BiweeklyPaymentData;
+use App\Architecture\Application\Services\PayrollCalculatorService;
 use App\Models\BiweeklyPayment;
 use App\Models\Employee;
 use App\Models\Headquarter;
 use App\Models\Loan;
 use App\Models\PayRoll;
+use Carbon\Carbon;
 
-class BiweeklyPaymentRepository implements IBaseRepository
+class BiweeklyPaymentRepository
 {
-    public function __construct(protected PayRollRepository $payRollRepository) {}
+    protected $calculator;
+
+    public function __construct()
+    {
+        $this->calculator = new PayrollCalculatorService();
+    }
 
     public function create($data)
     {
@@ -69,154 +75,164 @@ class BiweeklyPaymentRepository implements IBaseRepository
         }
     }
 
-    public function edit($key, $data)
-    {
-        $biweeklypayment = BiweeklyPayment::findOrFail($key);
-        return BiweeklyPaymentData::from($biweeklypayment->update($data));
-    }
-
-    public function findBy($key)
-    {
-        return BiweeklyPaymentData::optional(BiweeklyPayment::where('dni', '=', $key)->first());
-    }
-
-    public function findAll()
-    {
-        return BiweeklyPaymentData::collect(BiweeklyPayment::where('status_code', '=', 'active')->get());
-    }
-
-    public function delete($key)
-    {
-        $biweeklypayment = BiweeklyPayment::findOrFail($key);
-        $biweeklypayment->status_code = "deleted";
-        return BiweeklyPaymentData::from($biweeklypayment->save());
-    }
-
     public function createForAllEmployees()
-{
-    try {
-        $currentYear = now()->year;
-        $currentMonth = now()->month;
-        $currentDay = now()->day;
-        $biweekly = $currentDay <= 14 ? 1 : 2;
+    {
+        try {
+            $currentYear = now()->year;
+            $currentMonth = now()->month;
+            $currentDay = now()->day;
+            
+            $employees = Employee::with([
+                'activeContract',
+                'payrolls' => function ($query) use ($currentYear, $currentMonth) {
+                    $query->whereYear('created_at', $currentYear)
+                        ->whereMonth('created_at', $currentMonth);
+                },
+                'employeeAffiliations'
+            ])->get();
 
-        $employees = Employee::with([
-            'payrolls' => function ($query) use ($currentYear, $currentMonth) {
-                $query->whereYear('created_at', $currentYear)
-                    ->whereMonth('created_at', $currentMonth);
-            },
-            'employeeAffiliations'
-        ])->get();
+            $results = [];
 
-        $results = [];
-
-        foreach ($employees as $employee) {
-            try {
-                $payroll = $employee->payrolls->first();
-
-                if (!$payroll) {
-                    $results[] = [
-                        'employee' => $employee->dni,
-                        'message' => 'No payroll found for the employee this month',
-                        'status' => 404
-                    ];
-                    continue;
-                }
-
-                if ($payroll->biweeklyPayments->where('biweekly', $biweekly)->isNotEmpty()) {
-                    $results[] = [
-                        'employee' => $employee->dni,
-                        'message' => "Biweekly payment for biweekly {$biweekly} already exists",
-                        'status' => 409
-                    ];
-                    continue;
-                }
-
-                $ef = $payroll->real_salary - $payroll->accounting_salary;
-                $aff = $employee->employeeAffiliations->sum(fn($em) => ($em->percent / 100) *  $payroll->accounting_salary);
-
-                $biweeklypayment = new BiweeklyPayment();
-                $biweeklypayment->pay_roll_id = $payroll->id;
-                $biweeklypayment->biweekly_date = now();
-                $biweeklypayment->biweekly = $biweekly;
-
-                $loan = Loan::where('employee', $employee->dni)->first();
-                $campaign = $payroll->campaign;
-
-                // Cálculo de descuentos y adicionales
-                $dis1 = $payroll->discountPayments
-                    ->where('biweek', $biweekly)
-                    ->where('pay_card', 1)
-                    ->sum(fn($d) => $d->amount * $d->quantity);
-
-                $dis2 = $payroll->discountPayments
-                    ->where('biweek', $biweekly)
-                    ->where('pay_card', 2)
-                    ->sum(fn($d) => $d->amount * $d->quantity);
-
-                $add1 = $payroll->additionalPayments
-                    ->where('biweek', $biweekly)
-                    ->where('pay_card', 1)
-                    ->sum(fn($a) => $a->amount * $a->quantity);
-
-                $add2 = $payroll->additionalPayments
-                    ->where('biweek', $biweekly)
-                    ->where('pay_card', 2)
-                    ->sum(fn($a) => $a->amount * $a->quantity);
-
-                $campaignAmount = 0;
-
-                if ($campaign && $campaign->biweek == $biweekly) {
-                    $campaignAmount = $campaign->amount;
-                }
-
-                if ($biweekly == 1) {
-                    $biweeklypayment->discounts = $dis1 + $dis2;
-                    $biweeklypayment->additionals = $add1 + $add2 + $campaignAmount;
-                    $biweeklypayment->accounting_amount = $payroll->accounting_salary * 0.4 - $dis1 + $add1;
-                    $biweeklypayment->real_amount = $ef * 0.4 - $dis2 + $add2;
-                } else {
-                    $biweeklypayment->discounts = $dis1 + $dis2 + $aff;
-                    $biweeklypayment->additionals = $add1 + $add2 + $campaignAmount;
-                    $biweeklypayment->accounting_amount = ($payroll->accounting_salary * 0.6) - $dis1 + $add1 - $aff;
-                    $biweeklypayment->real_amount = $ef * 0.6 - $dis2 + $add2;
-                }
-
-                if ($loan) {
-                    if ($loan->biweek === $biweekly) {
-                        if ($loan->pay_card === 1) {
-                            $biweeklypayment->accounting_amount -= $loan->amount;
-                        } else {
-                            $biweeklypayment->real_amount -= $loan->amount;
-                        }
-                        $biweeklypayment->discounts += $loan->amount;
+            foreach ($employees as $employee) {
+                try {
+                    if (!$employee->activeContract) {
+                        $results[] = [
+                            'employee' => $employee->dni,
+                            'message' => 'No tiene contrato activo',
+                            'status' => 404
+                        ];
+                        continue;
                     }
+
+                    $contract = $employee->activeContract;
+                    $payroll = $employee->payrolls->first();
+
+                    if (!$payroll) {
+                        $results[] = [
+                            'employee' => $employee->dni,
+                            'message' => 'No tiene planilla este mes',
+                            'status' => 404
+                        ];
+                        continue;
+                    }
+
+                    // Solo procesar empleados con pago quincenal
+                    if ($contract->payment_type !== 'quincenal') {
+                        $results[] = [
+                            'employee' => $employee->dni,
+                            'message' => 'Contrato mensual - no aplica pago quincenal',
+                            'status' => 200
+                        ];
+                        continue;
+                    }
+
+                    $biweekly = $currentDay <= 15 ? 1 : 2;
+
+                    if ($payroll->biweeklyPayments->where('biweekly', $biweekly)->isNotEmpty()) {
+                        $results[] = [
+                            'employee' => $employee->dni,
+                            'message' => "Pago quincenal {$biweekly} ya existe",
+                            'status' => 409
+                        ];
+                        continue;
+                    }
+
+                    $calculator = new PayrollCalculatorService();
+                    $periods = $calculator->getPaymentPeriods('quincenal', $currentYear, $currentMonth);
+                    $currentPeriod = $periods[$biweekly - 1];
+
+                    // Calcular días trabajados proporcionales
+                    $workedDays = $calculator->calculateWorkedDays(
+                        $contract->hire_date,
+                        $currentPeriod['start'],
+                        $currentPeriod['end'],
+                        true
+                    );
+
+                    // Resto de la lógica de cálculo...
+                    $ef = $payroll->real_salary - $payroll->accounting_salary;
+                    $aff = $employee->employeeAffiliations->sum(fn($em) => ($em->percent / 100) * $payroll->accounting_salary);
+
+                    $biweeklypayment = new BiweeklyPayment();
+                    $biweeklypayment->pay_roll_id = $payroll->id;
+                    $biweeklypayment->biweekly_date = now();
+                    $biweeklypayment->biweekly = $biweekly;
+                    $biweeklypayment->worked_days = $workedDays; // Nuevo campo
+
+                    // Cálculo de descuentos y adicionales
+                    $dis1 = $payroll->discountPayments
+                        ->where('biweek', $biweekly)
+                        ->where('pay_card', 1)
+                        ->sum(fn($d) => $d->amount * $d->quantity);
+
+                    $dis2 = $payroll->discountPayments
+                        ->where('biweek', $biweekly)
+                        ->where('pay_card', 2)
+                        ->sum(fn($d) => $d->amount * $d->quantity);
+
+                    $add1 = $payroll->additionalPayments
+                        ->where('biweek', $biweekly)
+                        ->where('pay_card', 1)
+                        ->sum(fn($a) => $a->amount * $a->quantity);
+
+                    $add2 = $payroll->additionalPayments
+                        ->where('biweek', $biweekly)
+                        ->where('pay_card', 2)
+                        ->sum(fn($a) => $a->amount * $a->quantity);
+
+                    $campaign = $payroll->campaign;
+                    $campaignAmount = 0;
+
+                    if ($campaign && $campaign->biweek == $biweekly) {
+                        $campaignAmount = $campaign->amount;
+                    }
+
+                    if ($biweekly == 1) {
+                        $biweeklypayment->discounts = $dis1 + $dis2;
+                        $biweeklypayment->additionals = $add1 + $add2 + $campaignAmount;
+                        $biweeklypayment->accounting_amount = $payroll->accounting_salary * 0.4 - $dis1 + $add1;
+                        $biweeklypayment->real_amount = $ef * 0.4 - $dis2 + $add2;
+                    } else {
+                        $biweeklypayment->discounts = $dis1 + $dis2 + $aff;
+                        $biweeklypayment->additionals = $add1 + $add2 + $campaignAmount;
+                        $biweeklypayment->accounting_amount = ($payroll->accounting_salary * 0.6) - $dis1 + $add1 - $aff;
+                        $biweeklypayment->real_amount = $ef * 0.6 - $dis2 + $add2;
+                    }
+
+                    $loan = Loan::where('employee', $employee->dni)->first();
+                    if ($loan) {
+                        if ($loan->biweek === $biweekly) {
+                            if ($loan->pay_card === 1) {
+                                $biweeklypayment->accounting_amount -= $loan->amount;
+                            } else {
+                                $biweeklypayment->real_amount -= $loan->amount;
+                            }
+                            $biweeklypayment->discounts += $loan->amount;
+                        }
+                    }
+
+                    $biweeklypayment->save();
+
+                    $results[] = [
+                        'employee' => $employee->dni,
+                        'message' => "Pago quincenal {$biweekly} creado exitosamente ({$workedDays} días trabajados)",
+                        'status' => 201
+                    ];
+
+                } catch (\Throwable $th) {
+                    $results[] = [
+                        'employee' => $employee->dni,
+                        'message' => 'Error: ' . $th->getMessage(),
+                        'status' => 500
+                    ];
                 }
-
-                $biweeklypayment->save();
-
-                $results[] = [
-                    'employee' => $employee->dni,
-                    'message' => "Biweekly payment for biweekly {$biweekly} created successfully",
-                    'status' => 201
-                ];
-            } catch (\Throwable $th) {
-                $results[] = [
-                    'employee' => $employee->dni,
-                    'message' => 'Error processing employee: ' . $th->getMessage(),
-                    'status' => 500
-                ];
             }
+
+            return $results;
+        } catch (\Throwable $th) {
+            return ['message' => 'Error crítico: ' . $th->getMessage(), 'status' => 500];
         }
-
-        return $results;
-    } catch (\Throwable $th) {
-        return ['message' => 'Critical error: ' . $th->getMessage(), 'status' => 500];
     }
-}
-
-
-
 
     public function reportByBiweekly($request)
     {

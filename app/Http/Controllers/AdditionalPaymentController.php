@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AdditionalPayment;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class AdditionalPaymentController extends Controller
 {
@@ -12,17 +13,37 @@ class AdditionalPaymentController extends Controller
         return response()->json(AdditionalPayment::all());
     }
 
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'amount' => 'required|numeric',
-            'status_code' => 'nullable|string|max:20',
-        ]);
+    // En AdditionalPaymentController.php
+public function store(Request $request)
+{
+    Log::info('=== ADDITIONAL PAYMENT STORE ===', $request->all());
+    
+    try {
+        $data = [
+            'pay_roll_id' => $request->input('pay_roll_id'),
+            'payment_type_id' => $request->input('payment_type_id'),
+            'amount' => $request->input('amount'),
+            'quantity' => $request->input('quantity', 1),
+            'biweek' => $request->input('biweek', 1),
+            'pay_card' => $request->input('pay_card', false)
+        ];
 
-        $additionalPayment = AdditionalPayment::create($validated);
+        Log::info('Datos para crear:', $data);
 
+        $additionalPayment = AdditionalPayment::create($data);
+        
+        Log::info('AdditionalPayment creado:', $additionalPayment->toArray());
+        
         return response()->json($additionalPayment, 201);
+        
+    } catch (\Exception $e) {
+        Log::error('Error creando AdditionalPayment:', [
+            'error' => $e->getMessage(),
+            'request' => $request->all()
+        ]);
+        return response()->json(['error' => $e->getMessage()], 500);
     }
+}
 
     public function show($id)
     {
