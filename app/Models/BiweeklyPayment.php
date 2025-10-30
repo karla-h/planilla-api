@@ -18,6 +18,11 @@ class BiweeklyPayment extends Model
         'additionals',
         'pay_roll_id'
     ];
+    protected $hidden = [
+        'created_at',
+        'updated_at',
+        'deleted_at'
+    ];
 
     public function payroll()
     {

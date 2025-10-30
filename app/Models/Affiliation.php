@@ -16,6 +16,11 @@ class Affiliation extends Model
         'description',
         'percent'
     ];
+    protected $hidden = [
+        'created_at',
+        'updated_at',
+        'deleted_at'
+    ];
 
     public function employeeAffiliations() {
         return $this->hasMany(EmployeeAffiliation::class);

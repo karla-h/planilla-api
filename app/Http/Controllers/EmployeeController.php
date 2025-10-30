@@ -9,36 +9,57 @@ use Illuminate\Http\JsonResponse;
 
 class EmployeeController extends Controller
 {
-
     public function __construct(protected EmployeeService $service) {}
 
     public function index(): JsonResponse
     {
-        return response()->json($this->service->findAll(), 200);
+        try {
+            $employees = $this->service->findAll();
+            return response()->json($employees, 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al obtener empleados: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function store(EmployeeRequest $request): JsonResponse
     {
-        $response = $this->service->create($request);
-        return response()->json($response, $response['status']);
+        try {
+            $response = $this->service->create($request->validated());
+            return response()->json($response, $response['status']);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al crear empleado: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function show(string $dni): JsonResponse
     {
         try {
-            return response()->json($this->service->findBy($dni), 200);
+            $employee = $this->service->findBy($dni);
+            return response()->json($employee, 200);
         } catch (EntityNotFoundException $e) {
             return response()->json(['message' => $e->getMessage()], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al obtener empleado: ' . $e->getMessage()
+            ], 500);
         }
     }
 
     public function update(EmployeeRequest $request, string $dni): JsonResponse
     {
         try {
-            $response = $this->service->edit($dni, $request);
-            return response()->json(['message' => $response['message']], $response['status']);
+            $response = $this->service->edit($dni, $request->validated());
+            return response()->json($response, $response['status']);
         } catch (EntityNotFoundException $e) {
             return response()->json(['message' => $e->getMessage()], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al actualizar empleado: ' . $e->getMessage()
+            ], 500);
         }
     }
 
@@ -46,19 +67,37 @@ class EmployeeController extends Controller
     {
         try {
             $response = $this->service->delete($dni);
-            return response()->json(['message' => $response['message']], $response['status']);
+            return response()->json($response, $response['status']);
         } catch (EntityNotFoundException $e) {
             return response()->json(['message' => $e->getMessage()], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al eliminar empleado: ' . $e->getMessage()
+            ], 500);
         }
     }
 
-    public function getEmployeesWithoutPayroll() {
-        $response = $this->service->getEmployeesWithoutPayroll();
-        return response()->json($response, $response['status']);
+    public function getEmployeesWithoutPayroll(): JsonResponse
+    {
+        try {
+            $response = $this->service->getEmployeesWithoutPayroll();
+            return response()->json($response, $response['status']);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al obtener empleados sin planilla: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
-    public function getEmployeesByBirthday(string $birth) {
-        $response = $this->service->getEmployeesByBirthday($birth);
-        return response()->json($response, $response['status']);
+    public function getEmployeesByBirthday(string $birth): JsonResponse
+    {
+        try {
+            $response = $this->service->getEmployeesByBirthday($birth);
+            return response()->json($response, $response['status']);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al obtener empleados por cumpleaños: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

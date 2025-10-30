@@ -17,6 +17,11 @@ class AdditionalPayment extends Model
         'biweek',
         'pay_card'
     ];
+    protected $hidden = [
+        'created_at',
+        'updated_at',
+        'deleted_at'
+    ];
 
     public function payRoll()
     {

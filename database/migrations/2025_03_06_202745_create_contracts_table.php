@@ -16,10 +16,11 @@ return new class extends Migration
             $table->date('hire_date')->nullable();
             $table->date('termination_date')->nullable();
             $table->string('termination_reason')->nullable();
-            $table->decimal('accounting_salary', 8, 2);
-            $table->decimal('real_salary', 8, 2);
-            $table->enum('status_code', ['enable','disable'])->default('enable');
-            $table->foreignId('employee_id')->constrained();
+            $table->decimal('accounting_salary', 10, 2);
+            $table->decimal('real_salary', 10, 2);
+            $table->enum('payment_type', ['quincenal', 'mensual'])->default('quincenal');
+            $table->enum('status_code', ['active', 'terminated', 'suspended'])->default('active');
+            $table->foreignId('employee_id')->constrained()->onDelete('cascade');
             $table->softDeletes();
             $table->timestamps();
         });

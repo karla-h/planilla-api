@@ -20,6 +20,12 @@ class Loan extends Model
         'biweek',
     ];
 
+    protected $hidden = [
+        'created_at',
+        'updated_at',
+        'deleted_at'
+    ];
+
     protected $casts = [
         'start_date' => 'date',
         'end_date' => 'date',

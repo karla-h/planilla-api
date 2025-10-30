@@ -16,6 +16,11 @@ class DiscountType extends Model
         'description', 
         'value'
     ];
+    protected $hidden = [
+        'created_at',
+        'updated_at',
+        'deleted_at'
+    ];
 
     public function discountPayments()
     {

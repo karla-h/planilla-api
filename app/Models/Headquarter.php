@@ -16,6 +16,11 @@ class Headquarter extends Model
         'name', 
         'address', 
     ];
+    protected $hidden = [
+        'created_at',
+        'updated_at',
+        'deleted_at'
+    ];
 
     public function employees()
     {
