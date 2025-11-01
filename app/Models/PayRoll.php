@@ -10,16 +10,12 @@ class PayRoll extends Model
 {
     use HasFactory, SoftDeletes;
 
-    const STATUS_DRAFT = 'draft';
-    const STATUS_OPEN = 'open'; 
-    const STATUS_PARTIAL = 'partial';
+    const STATUS_OPEN = 'open';
     const STATUS_CLOSED = 'closed';
-    const STATUS_PAID = 'paid';
-    const STATUS_LOCKED = 'locked';
 
     protected $fillable = [
         'accounting_salary',
-        'real_salary', 
+        'real_salary',
         'employee_id',
         'loan_id',
         'campaign_id',
@@ -54,10 +50,36 @@ class PayRoll extends Model
         return $this->hasMany(BiweeklyPayment::class);
     }
 
-    // Nuevos métodos de estado
-    public function isDraft()
+    public function getPermissions()
     {
-        return $this->status === self::STATUS_DRAFT;
+        return [
+            self::STATUS_OPEN => [       // ✅ MÁXIMA FLEXIBILIDAD
+                'edit_additions' => true,
+                'edit_discounts' => true, 
+                'generate_payments' => true,
+                'edit_payments' => true,
+                'delete_payments' => true,
+                'edit_planilla' => true,     // Editar salarios, periodos
+                'apply_loans' => true,       // Aplicar préstamos
+                'apply_campaigns' => true,   // Aplicar campañas
+                'recalculate_all' => true,   // Recalcular todo
+                'can_close' => true,
+                'can_reopen' => false
+            ],
+            self::STATUS_CLOSED => [     // ❌ SOLO LECTURA
+                'edit_additions' => false,
+                'edit_discounts' => false,
+                'generate_payments' => false, 
+                'edit_payments' => false,
+                'delete_payments' => false,
+                'edit_planilla' => false,
+                'apply_loans' => false,
+                'apply_campaigns' => false,
+                'recalculate_all' => false,
+                'can_close' => false,
+                'can_reopen' => true      // ← Puede reabrir si se equivocó
+            ]
+        ];
     }
 
     public function isOpen()
@@ -65,24 +87,14 @@ class PayRoll extends Model
         return $this->status === self::STATUS_OPEN;
     }
 
-    public function isPartial()
-    {
-        return $this->status === self::STATUS_PARTIAL;
-    }
-
     public function isClosed()
     {
         return $this->status === self::STATUS_CLOSED;
     }
 
-    public function isLocked()
-    {
-        return $this->status === self::STATUS_LOCKED;
-    }
-
     public function canEdit()
     {
-        return $this->canEditAdditions() || $this->canEditDiscounts();
+        return $this->isOpen();
     }
 
     public function getPaymentType()
@@ -100,92 +112,53 @@ class PayRoll extends Model
         return $this->biweeklyPayments()->count();
     }
 
-    public function getPermissions()
-    {
-        return [
-            self::STATUS_DRAFT => [
-                'edit_additions' => true,
-                'edit_discounts' => true,
-                'generate_payments' => false,
-                'edit_payments' => false,
-                'delete_payments' => false,
-                'can_close' => false
-            ],
-            self::STATUS_OPEN => [
-                'edit_additions' => true,
-                'edit_discounts' => true, 
-                'generate_payments' => true,
-                'edit_payments' => true,
-                'delete_payments' => true,
-                'can_close' => false
-            ],
-            self::STATUS_PARTIAL => [
-                'edit_additions' => true,
-                'edit_discounts' => true,
-                'generate_payments' => true,
-                'edit_payments' => true,
-                'delete_payments' => true,
-                'can_close' => false
-            ],
-            self::STATUS_CLOSED => [
-                'edit_additions' => false,
-                'edit_discounts' => false,
-                'generate_payments' => false,
-                'edit_payments' => false,
-                'delete_payments' => false,
-                'can_close' => true
-            ],
-            self::STATUS_PAID => [
-                'edit_additions' => false,
-                'edit_discounts' => false,
-                'generate_payments' => false,
-                'edit_payments' => false,
-                'delete_payments' => false,
-                'can_close' => true
-            ],
-            self::STATUS_LOCKED => [
-                'edit_additions' => false,
-                'edit_discounts' => false,
-                'generate_payments' => false,
-                'edit_payments' => false,
-                'delete_payments' => false,
-                'can_close' => false
-            ]
-        ];
-    }
-
     public function canEditAdditions()
     {
-        return $this->getPermissions()[$this->status]['edit_additions'];
+        return $this->isOpen();
     }
 
     public function canEditDiscounts()
     {
-        return $this->getPermissions()[$this->status]['edit_discounts'];
+        return $this->isOpen();
     }
 
     public function canGeneratePayments()
     {
-        return $this->getPermissions()[$this->status]['generate_payments'];
+        return $this->isOpen();
     }
 
     public function canEditPayments()
     {
-        return $this->getPermissions()[$this->status]['edit_payments'];
+        return $this->isOpen();
     }
 
     public function canDeletePayments()
     {
-        return $this->getPermissions()[$this->status]['delete_payments'];
+        return $this->isOpen();
     }
 
     public function canClose()
     {
-        return $this->getPermissions()[$this->status]['can_close'];
+        return $this->isOpen();
+    }
+
+    public function canRecalculate()
+    {
+        return $this->isOpen();
     }
 
     public function getAllPermissions()
     {
         return $this->getPermissions()[$this->status];
+    }
+
+    public function loan()
+    {
+        return $this->belongsTo(Loan::class);
+    }
+
+    public function campaign()
+    {
+        return $this->belongsTo(Campaign::class);
     }
 }

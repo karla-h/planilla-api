@@ -6,7 +6,6 @@ use App\Architecture\Application\Services\DiscountTypeService;
 use App\Exceptions\EntityNotFoundException;
 use App\Http\Requests\DiscountTypeRequest;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
 class DiscountTypeController extends Controller
 {
@@ -14,41 +13,67 @@ class DiscountTypeController extends Controller
 
     public function index(): JsonResponse
     {
-        return response()->json($this->service->findAll(), 200);
+        try {
+            $discountTypes = $this->service->findAll();
+            return response()->json($discountTypes, 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al obtener tipos de descuento'
+            ], 500);
+        }
     }
 
     public function store(DiscountTypeRequest $request): JsonResponse
     {
-        $paymentType = $this->service->create($request);
-        return response()->json($paymentType, 201);
+        try {
+            $discountType = $this->service->create($request);
+            return response()->json($discountType, 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al crear tipo de descuento'
+            ], 500);
+        }
     }
 
     public function show(string $key): JsonResponse
     {
         try {
-            $paymentType = $this->service->findBy($key);
-            return response()->json($paymentType, 200);
+            $discountType = $this->service->findBy($key);
+            return response()->json($discountType, 200);
         } catch (EntityNotFoundException $e) {
             return response()->json(['message' => $e->getMessage()], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al obtener tipo de descuento'
+            ], 500);
         }
     }
 
     public function update(DiscountTypeRequest $request, string $key): JsonResponse
     {
         try {
-            $paymentType = $this->service->edit($key, $request);
-            return response()->json($paymentType, 200);
+            $discountType = $this->service->edit($key, $request);
+            return response()->json($discountType, 200);
         } catch (EntityNotFoundException $e) {
             return response()->json(['message' => $e->getMessage()], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al actualizar tipo de descuento'
+            ], 500);
         }
     }
 
     public function destroy(string $key): JsonResponse
     {
         try {
-            return response()->json($this->service->delete($key), 202);
+            $result = $this->service->delete($key);
+            return response()->json($result, 202);
         } catch (EntityNotFoundException $e) {
             return response()->json(['message' => $e->getMessage()], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al eliminar tipo de descuento'
+            ], 500);
         }
     }
 }

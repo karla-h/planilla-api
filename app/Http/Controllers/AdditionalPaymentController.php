@@ -4,73 +4,106 @@ namespace App\Http\Controllers;
 
 use App\Models\AdditionalPayment;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class AdditionalPaymentController extends Controller
 {
     public function index()
     {
-        return response()->json(AdditionalPayment::all());
+        try {
+            $additionalPayments = AdditionalPayment::all();
+            return response()->json($additionalPayments);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al obtener pagos adicionales'], 500);
+        }
     }
 
-    // En AdditionalPaymentController.php
-public function store(Request $request)
-{
-    Log::info('=== ADDITIONAL PAYMENT STORE ===', $request->all());
-    
-    try {
-        $data = [
-            'pay_roll_id' => $request->input('pay_roll_id'),
-            'payment_type_id' => $request->input('payment_type_id'),
-            'amount' => $request->input('amount'),
-            'quantity' => $request->input('quantity', 1),
-            'biweek' => $request->input('biweek', 1),
-            'pay_card' => $request->input('pay_card', false)
-        ];
+    public function store(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'pay_roll_id' => 'required|exists:pay_rolls,id',
+                'payment_type_id' => 'required|exists:payment_types,id',
+                'amount' => 'required|numeric|min:0',
+                'quantity' => 'sometimes|integer|min:1',
+                'biweek' => 'sometimes|integer|in:1,2',
+                'pay_card' => 'sometimes|boolean'
+            ]);
 
-        Log::info('Datos para crear:', $data);
+            if ($validator->fails()) {
+                return response()->json(['errors' => $validator->errors()], 422);
+            }
 
-        $additionalPayment = AdditionalPayment::create($data);
-        
-        Log::info('AdditionalPayment creado:', $additionalPayment->toArray());
-        
-        return response()->json($additionalPayment, 201);
-        
-    } catch (\Exception $e) {
-        Log::error('Error creando AdditionalPayment:', [
-            'error' => $e->getMessage(),
-            'request' => $request->all()
-        ]);
-        return response()->json(['error' => $e->getMessage()], 500);
+            $data = [
+                'pay_roll_id' => $request->input('pay_roll_id'),
+                'payment_type_id' => $request->input('payment_type_id'),
+                'amount' => $request->input('amount'),
+                'quantity' => $request->input('quantity', 1),
+                'biweek' => $request->input('biweek', 1),
+                'pay_card' => $request->input('pay_card', false)
+            ];
+
+            $additionalPayment = AdditionalPayment::create($data);
+            return response()->json($additionalPayment, 201);
+            
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al crear pago adicional'], 500);
+        }
     }
-}
 
     public function show($id)
     {
-        $additionalPayment = AdditionalPayment::find($id);
-        return $additionalPayment ? response()->json($additionalPayment) : response()->json(['message' => 'Not found'], 404);
+        try {
+            $additionalPayment = AdditionalPayment::find($id);
+            return $additionalPayment 
+                ? response()->json($additionalPayment) 
+                : response()->json(['message' => 'No encontrado'], 404);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al obtener pago adicional'], 500);
+        }
     }
 
     public function update(Request $request, $id)
     {
-        $additionalPayment = AdditionalPayment::find($id);
-        if (!$additionalPayment) return response()->json(['message' => 'Not found'], 404);
+        try {
+            $additionalPayment = AdditionalPayment::find($id);
+            if (!$additionalPayment) {
+                return response()->json(['message' => 'No encontrado'], 404);
+            }
 
-        $validated = $request->validate([
-            'amount' => 'sometimes|required|numeric',
-            'status_code' => 'nullable|string|max:20',
-        ]);
+            $validator = Validator::make($request->all(), [
+                'amount' => 'sometimes|required|numeric|min:0',
+                'quantity' => 'sometimes|integer|min:1',
+                'biweek' => 'sometimes|integer|in:1,2',
+                'pay_card' => 'sometimes|boolean',
+                'status_code' => 'nullable|string|max:20',
+            ]);
 
-        $additionalPayment->update($validated);
-        return response()->json($additionalPayment);
+            if ($validator->fails()) {
+                return response()->json(['errors' => $validator->errors()], 422);
+            }
+
+            $additionalPayment->update($validator->validated());
+            return response()->json($additionalPayment);
+            
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al actualizar pago adicional'], 500);
+        }
     }
 
     public function destroy($id)
     {
-        $additionalPayment = AdditionalPayment::find($id);
-        if (!$additionalPayment) return response()->json(['message' => 'Not found'], 404);
+        try {
+            $additionalPayment = AdditionalPayment::find($id);
+            if (!$additionalPayment) {
+                return response()->json(['message' => 'No encontrado'], 404);
+            }
 
-        $additionalPayment->delete();
-        return response()->json(['message' => 'Deleted successfully']);
+            $additionalPayment->delete();
+            return response()->json(['message' => 'Eliminado correctamente']);
+            
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al eliminar pago adicional'], 500);
+        }
     }
 }

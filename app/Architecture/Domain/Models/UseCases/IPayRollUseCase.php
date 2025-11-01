@@ -14,11 +14,8 @@ interface IPayRollUseCase
     public function createForAllEmployees();
     public function createPayrollsForSpecificEmployees($request);
     public function calculatePayment($employeeId, $year, $month, $periodType = null);
-    public function generateProportionalBiweeklyPayments($employeeId, $year, $month, $biweekly);
     public function regenerateBiweeklyPayment($payrollId, $biweeklyId);
     public function deleteBiweeklyPayment($payrollId, $biweeklyId);
     public function openPayroll($id);
     public function closePayroll($id);
-    public function lockPayroll($id);
-    public function unlockPayroll($id);
 }

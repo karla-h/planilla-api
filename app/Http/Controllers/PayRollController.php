@@ -159,30 +159,6 @@ class PayRollController extends Controller
         }
     }
 
-    public function generateProportionalBiweeklyPayment(Request $request, $employeeId): JsonResponse
-    {
-        try {
-            Log::info('PayRollController@generateProportionalBiweeklyPayment - Generando pago quincenal', [
-                'employeeId' => $employeeId,
-                'request' => $request->all()
-            ]);
-            $year = $request->input('year', now()->year);
-            $month = $request->input('month', now()->month);
-            $biweekly = $request->input('biweekly', now()->day <= 15 ? 1 : 2);
-
-            $response = $this->service->generateProportionalBiweeklyPayments($employeeId, $year, $month, $biweekly);
-            return response()->json($response, $response['status']);
-        } catch (\Exception $e) {
-            Log::error('Error en PayRollController@generateProportionalBiweeklyPayment', [
-                'error' => $e->getMessage(),
-                'employeeId' => $employeeId
-            ]);
-            return response()->json([
-                'message' => 'Error al generar pago quincenal'
-            ], 500);
-        }
-    }
-
     // Métodos de gestión de estados
     public function openPayroll($id): JsonResponse
     {
@@ -332,4 +308,16 @@ class PayRollController extends Controller
             return response()->json(['message' => 'Error al eliminar pago'], 500);
         }
     }
+
+    // En PayRollController
+public function generatePayment(Request $request, $employeeId): JsonResponse
+{
+    // Este método RECIBE la request y llama al service
+    $year = $request->input('year', now()->year);
+    $month = $request->input('month', now()->month);
+    $biweekly = $request->input('biweekly', null);
+
+    $response = $this->service->generatePayments($employeeId, $year, $month, $biweekly);
+    return response()->json($response, $response['status']);
+}
 }

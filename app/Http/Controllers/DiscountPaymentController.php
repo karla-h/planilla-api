@@ -4,60 +4,95 @@ namespace App\Http\Controllers;
 
 use App\Models\DiscountPayment;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 
 class DiscountPaymentController extends Controller
 {
     public function index()
     {
-        return response()->json(DiscountPayment::all());
+        try {
+            $discountPayments = DiscountPayment::all();
+            return response()->json($discountPayments);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al obtener descuentos'], 500);
+        }
     }
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'pay_roll_id' => 'required|exists:pay_rolls,id', // ← CORREGIDO: 'pay_roll_id'
-            'discount_type_id' => 'required|exists:discount_types,id',
-            'amount' => 'required|numeric',
-            'quantity' => 'sometimes|numeric',
-            'biweek' => 'sometimes|numeric', 
-            'pay_card' => 'sometimes|boolean'
-        ]);
+        try {
+            $validator = Validator::make($request->all(), [
+                'pay_roll_id' => 'required|exists:pay_rolls,id',
+                'discount_type_id' => 'required|exists:discount_types,id',
+                'amount' => 'required|numeric',
+                'quantity' => 'sometimes|numeric',
+                'biweek' => 'sometimes|numeric|nullable',
+                'pay_card' => 'sometimes|in:0,1'
+            ]);
 
-        $discountPayment = DiscountPayment::create($validated);
+            if ($validator->fails()) {
+                return response()->json(['errors' => $validator->errors()], 422);
+            }
 
-        return response()->json($discountPayment, 201);
+            $discountPayment = DiscountPayment::create($validator->validated());
+            return response()->json($discountPayment, 201);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al crear descuento'], 500);
+        }
     }
 
     public function show($id)
     {
-        $discountPayment = DiscountPayment::find($id);
-        return $discountPayment ? response()->json($discountPayment) : response()->json(['message' => 'Not found'], 404);
+        try {
+            $discountPayment = DiscountPayment::find($id);
+            return $discountPayment 
+                ? response()->json($discountPayment) 
+                : response()->json(['message' => 'No encontrado'], 404);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al obtener descuento'], 500);
+        }
     }
 
     public function update(Request $request, $id)
     {
-        $discountPayment = DiscountPayment::find($id);
-        if (!$discountPayment) return response()->json(['message' => 'Not found'], 404);
+        try {
+            $discountPayment = DiscountPayment::find($id);
+            if (!$discountPayment) {
+                return response()->json(['message' => 'No encontrado'], 404);
+            }
 
-        $validated = $request->validate([
-            'pay_roll_id' => 'sometimes|required|exists:pay_rolls,id', // ← CORREGIDO
-            'discount_type_id' => 'sometimes|required|exists:discount_types,id',
-            'amount' => 'sometimes|required|numeric',
-            'quantity' => 'sometimes|numeric',
-            'biweek' => 'sometimes|numeric',
-            'pay_card' => 'sometimes|boolean'
-        ]);
+            $validator = Validator::make($request->all(), [
+                'pay_roll_id' => 'sometimes|required|exists:pay_rolls,id',
+                'discount_type_id' => 'sometimes|required|exists:discount_types,id',
+                'amount' => 'sometimes|required|numeric',
+                'quantity' => 'sometimes|numeric',
+                'biweek' => 'sometimes|numeric|nullable',
+                'pay_card' => 'sometimes|boolean'
+            ]);
 
-        $discountPayment->update($validated);
-        return response()->json($discountPayment);
+            if ($validator->fails()) {
+                return response()->json(['errors' => $validator->errors()], 422);
+            }
+
+            $discountPayment->update($validator->validated());
+            return response()->json($discountPayment);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al actualizar descuento'], 500);
+        }
     }
 
     public function destroy($id)
     {
-        $discountPayment = DiscountPayment::find($id);
-        if (!$discountPayment) return response()->json(['message' => 'Not found'], 404);
+        try {
+            $discountPayment = DiscountPayment::find($id);
+            if (!$discountPayment) {
+                return response()->json(['message' => 'No encontrado'], 404);
+            }
 
-        $discountPayment->delete();
-        return response()->json(['message' => 'Deleted successfully']);
+            $discountPayment->delete();
+            return response()->json(['message' => 'Eliminado correctamente']);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al eliminar descuento'], 500);
+        }
     }
 }

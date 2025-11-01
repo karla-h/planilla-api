@@ -12,6 +12,7 @@ class BiweeklyPaymentService
         return $this->biweeklyPaymentRepository->create($request->all());
     }
 
+
     public function createForAllEmployees() {
         return $this->biweeklyPaymentRepository->createForAllEmployees();
     }

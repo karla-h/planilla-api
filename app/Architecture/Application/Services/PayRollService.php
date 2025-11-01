@@ -63,10 +63,6 @@ class PayRollService implements IPayRollUseCase
         return $this->repository->calculatePayment($employeeId, $year, $month, $periodType);
     }
 
-    public function generateProportionalBiweeklyPayments($employeeId, $year, $month, $biweekly)
-    {
-        return $this->repository->generateProportionalBiweeklyPayments($employeeId, $year, $month, $biweekly);
-    }
 
     public function regenerateBiweeklyPayment($payrollId, $biweeklyId)
     {
@@ -88,13 +84,11 @@ class PayRollService implements IPayRollUseCase
         return $this->repository->closePayroll($id);
     }
 
-    public function lockPayroll($id)
+     /**
+     * Generar pagos según tipo de contrato
+     */
+    public function generatePayments($employeeId, $year, $month, $biweekly = null)
     {
-        return $this->repository->lockPayroll($id);
-    }
-
-    public function unlockPayroll($id)
-    {
-        return $this->repository->unlockPayroll($id);
+        return $this->repository->generatePayments($employeeId, $year, $month, $biweekly);
     }
 }

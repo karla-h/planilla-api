@@ -56,4 +56,22 @@ class Employee extends Model
             ->where('status_code', 'active')
             ->latest(); // O ->where('status_code', 'active')->first()
     }
+
+    /**
+     * Relación con loans por DNI
+     */
+    public function loans()
+    {
+        return $this->hasMany(Loan::class, 'employee', 'dni');
+    }
+
+    /**
+     * Obtener préstamo activo
+     */
+    public function activeLoan()
+    {
+        return $this->hasOne(Loan::class, 'employee', 'dni')
+            ->where('start_date', '<=', now())
+            ->where('end_date', '>=', now());
+    }
 }

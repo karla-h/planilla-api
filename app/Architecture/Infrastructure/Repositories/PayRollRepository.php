@@ -10,6 +10,7 @@ use App\Architecture\Domain\Models\Entities\EmployeeData;
 use App\Architecture\Domain\Models\Entities\PayRollData;
 use App\Exceptions\EntityNotFoundException;
 use App\Models\AdditionalPayment;
+use App\Models\Campaign;
 use App\Models\Contract;
 use App\Models\DiscountPayment;
 use App\Models\Employee;
@@ -21,6 +22,7 @@ use App\Models\PayRoll;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\FacadesLog;
 
 class PayRollRepository
 {
@@ -32,118 +34,156 @@ class PayRollRepository
     }
 
     public function create($request)
-{
-    try {
-        Log::info('PayRollRepository@create - Iniciando', ['request' => $request]);
-        
-        $employee = Employee::where('dni', $request['employee'])->first();
+    {
+        try {
+            Log::info('PayRollRepository@create - Iniciando', ['request' => $request]);
 
-        if (!$employee) {
-            return [
-                'message' => 'Employee not found', 
-                'status' => 404
-            ];
-        }
+            $employee = Employee::where('dni', $request['employee'])->first();
 
-        $currentYear = now()->year;
-        $currentMonth = now()->month;
-
-        $existingPayroll = PayRoll::where('employee_id', $employee->id)
-            ->whereYear('created_at', $currentYear)
-            ->whereMonth('created_at', $currentMonth)
-            ->first();
-
-        if ($existingPayroll) {
-            return [
-                'message' => 'The employee already has a payroll for the given month and year', 
-                'status' => 409
-            ];
-        }
-
-        // VERIFICAR CONTRATO ACTIVO DE FORMA EXPLÍCITA
-        $activeContract = Contract::where('employee_id', $employee->id)
-            ->where('status_code', 'active')
-            ->first();
-
-        Log::info('Contrato activo buscado', [
-            'employee_id' => $employee->id,
-            'contract_found' => $activeContract ? $activeContract->id : 'null'
-        ]);
-
-        if (!$activeContract) {
-            return [
-                'message' => 'Employee does not have an active contract',
-                'status' => 400
-            ];
-        }
-
-        // Crear la planilla con periodo
-        $periodStart = now()->startOfMonth();
-        $periodEnd = now()->endOfMonth();
-
-        $payroll = PayRoll::create([
-            'accounting_salary' => $activeContract->accounting_salary,
-            'real_salary' => $activeContract->real_salary,
-            'employee_id' => $employee->id,
-            'status' => PayRoll::STATUS_OPEN,
-            'period_start' => $periodStart,
-            'period_end' => $periodEnd
-        ]);
-
-        Log::info('Planilla creada exitosamente', ['payroll_id' => $payroll->id]);
-
-        // Crear additional payments si existen
-        if (isset($request['additionalPayments']) && is_array($request['additionalPayments'])) {
-            foreach ($request['additionalPayments'] as $add) {
-                AdditionalPayment::create([
-                    'pay_roll_id' => $payroll->id,
-                    'payment_type_id' => $add['payment_type_id'],
-                    'amount' => $add['amount'],
-                    'quantity' => $add['quantity'] ?? 1,
-                    'biweek' => $add['biweek'] ?? 1,
-                    'pay_card' => $add['pay_card'] ?? 1,
-                ]);
+            if (!$employee) {
+                return [
+                    'message' => 'Employee not found',
+                    'status' => 404
+                ];
             }
-        }
 
-        // Crear discount payments si existen
-        if (isset($request['discountPayments']) && is_array($request['discountPayments'])) {
-            foreach ($request['discountPayments'] as $disc) {
-                DiscountPayment::create([
-                    'pay_roll_id' => $payroll->id,
-                    'discount_type_id' => $disc['discount_type_id'],
-                    'amount' => $disc['amount'],
-                    'quantity' => $disc['quantity'] ?? 1,
-                    'biweek' => $disc['biweek'] ?? 2,
-                    'pay_card' => $disc['pay_card'] ?? 1,
-                ]);
+            $currentYear = now()->year;
+            $currentMonth = now()->month;
+
+            $existingPayroll = PayRoll::where('employee_id', $employee->id)
+                ->whereYear('created_at', $currentYear)
+                ->whereMonth('created_at', $currentMonth)
+                ->first();
+
+            if ($existingPayroll) {
+                return [
+                    'message' => 'The employee already has a payroll for the given month and year',
+                    'status' => 409
+                ];
             }
-        }
 
-        return [
-            'message' => 'Payroll created successfully',
-            'status' => 201,
-            'data' => [
+            // VERIFICAR CONTRATO ACTIVO
+            $activeContract = Contract::where('employee_id', $employee->id)
+                ->where('status_code', 'active')
+                ->first();
+
+            Log::info('Contrato activo buscado', [
+                'employee_id' => $employee->id,
+                'contract_found' => $activeContract ? $activeContract->id : 'null',
+                'payment_type' => $activeContract ? $activeContract->payment_type : 'null'
+            ]);
+
+            if (!$activeContract) {
+                return [
+                    'message' => 'Employee does not have an active contract',
+                    'status' => 400
+                ];
+            }
+
+            // Determinar si es mensual o quincenal
+            $isMonthly = $activeContract->payment_type === 'mensual';
+
+            // Crear la planilla con periodo
+            $periodStart = now()->startOfMonth();
+            $periodEnd = now()->endOfMonth();
+
+            $payroll = PayRoll::create([
+                'accounting_salary' => $activeContract->accounting_salary,
+                'real_salary' => $activeContract->real_salary,
+                'employee_id' => $employee->id,
+                'status' => PayRoll::STATUS_OPEN,
+                'period_start' => $periodStart,
+                'period_end' => $periodEnd
+            ]);
+
+            Log::info('Planilla creada exitosamente', [
                 'payroll_id' => $payroll->id,
-                'employee' => $employee->dni,
-                'accounting_salary' => $payroll->accounting_salary,
-                'real_salary' => $payroll->real_salary,
-                'status' => $payroll->status
-            ]
-        ];
+                'payment_type' => $activeContract->payment_type,
+                'is_monthly' => $isMonthly
+            ]);
 
-    } catch (\Throwable $th) {
-        Log::error('Error en PayRollRepository@create', [
-            'message' => $th->getMessage(),
-            'trace' => $th->getTraceAsString()
-        ]);
-        
-        return [
-            'message' => 'Error, data cannot be processed: ' . $th->getMessage(), 
-            'status' => 500
-        ];
+            // ========== CORRECCIÓN PARA ADDITIONAL PAYMENTS ==========
+            if (isset($request['additionalPayments']) && is_array($request['additionalPayments'])) {
+                Log::info('Procesando additional payments', [
+                    'count' => count($request['additionalPayments']),
+                    'is_monthly' => $isMonthly
+                ]);
+
+                foreach ($request['additionalPayments'] as $add) {
+                    // Para contratos mensuales, biweek debe ser null
+                    $biweekValue = $isMonthly ? null : ($add['biweek'] ?? 1);
+
+                    AdditionalPayment::create([
+                        'pay_roll_id' => $payroll->id,
+                        'payment_type_id' => $add['payment_type_id'],
+                        'amount' => $add['amount'],
+                        'quantity' => $add['quantity'] ?? 1,
+                        'biweek' => $biweekValue, // ← CORREGIDO
+                        'pay_card' => $add['pay_card'] ?? 1,
+                    ]);
+
+                    Log::info('Additional payment creado', [
+                        'payment_type_id' => $add['payment_type_id'],
+                        'amount' => $add['amount'],
+                        'biweek' => $biweekValue
+                    ]);
+                }
+            }
+
+            // ========== CORRECCIÓN PARA DISCOUNT PAYMENTS ==========
+            if (isset($request['discountPayments']) && is_array($request['discountPayments'])) {
+                Log::info('Procesando discount payments', [
+                    'count' => count($request['discountPayments']),
+                    'is_monthly' => $isMonthly
+                ]);
+
+                foreach ($request['discountPayments'] as $disc) {
+                    // Para contratos mensuales, biweek debe ser null
+                    $biweekValue = $isMonthly ? null : ($disc['biweek'] ?? 1);
+
+                    DiscountPayment::create([
+                        'pay_roll_id' => $payroll->id,
+                        'discount_type_id' => $disc['discount_type_id'],
+                        'amount' => $disc['amount'],
+                        'quantity' => $disc['quantity'] ?? 1,
+                        'biweek' => $biweekValue, // ← CORREGIDO
+                        'pay_card' => $disc['pay_card'] ?? 1,
+                    ]);
+
+                    Log::info('Discount payment creado', [
+                        'discount_type_id' => $disc['discount_type_id'],
+                        'amount' => $disc['amount'],
+                        'biweek' => $biweekValue
+                    ]);
+                }
+            }
+
+            return [
+                'message' => 'Payroll created successfully',
+                'status' => 201,
+                'data' => [
+                    'payroll_id' => $payroll->id,
+                    'employee' => $employee->dni,
+                    'accounting_salary' => $payroll->accounting_salary,
+                    'real_salary' => $payroll->real_salary,
+                    'status' => $payroll->status,
+                    'payment_type' => $activeContract->payment_type,
+                    'additional_payments_count' => $payroll->additionalPayments->count(),
+                    'discount_payments_count' => $payroll->discountPayments->count()
+                ]
+            ];
+        } catch (\Throwable $th) {
+            Log::error('Error en PayRollRepository@create', [
+                'message' => $th->getMessage(),
+                'trace' => $th->getTraceAsString()
+            ]);
+
+            return [
+                'message' => 'Error, data cannot be processed: ' . $th->getMessage(),
+                'status' => 500
+            ];
+        }
     }
-}
 
     public function edit($key, $request)
     {
@@ -152,6 +192,7 @@ class PayRollRepository
             if (!$employee) {
                 return ['message' => 'Employee not found', 'status' => 404];
             }
+
             $currentYear = now()->year;
             $currentMonth = now()->month;
             $payroll = Payroll::where('employee_id', $employee->id)
@@ -162,29 +203,40 @@ class PayRollRepository
             if (!$payroll) {
                 return ['message' => 'PayRoll not found', 'status' => 404];
             }
+
+            // Obtener tipo de contrato para determinar si es mensual
+            $activeContract = $employee->activeContract();
+            $isMonthly = $activeContract && $activeContract->payment_type === 'mensual';
+
             AdditionalPayment::where('pay_roll_id', $payroll->id)->delete();
             DiscountPayment::where('pay_roll_id', $payroll->id)->delete();
+
             foreach ($request['additionalPayments'] as $add) {
+                $biweekValue = $isMonthly ? null : ($add['biweek'] ?? 1);
+
                 AdditionalPayment::create([
                     'pay_roll_id' => $payroll->id,
-                    'payment_type_id' => $add['id'],
+                    'payment_type_id' => $add['payment_type_id'], // ← CORREGIDO
                     'amount' => $add['amount'],
                     'quantity' => $add['quantity'] ?? 1,
-                    'biweek' => $add['biweek'] ?? 2,
+                    'biweek' => $biweekValue, // ← CORREGIDO
                     'pay_card' => $add['pay_card'] ?? 1,
                 ]);
             }
 
-            foreach ($request['discountPayments'] as $add) {
+            foreach ($request['discountPayments'] as $disc) {
+                $biweekValue = $isMonthly ? null : ($disc['biweek'] ?? 1);
+
                 DiscountPayment::create([
                     'pay_roll_id' => $payroll->id,
-                    'discount_type_id' => $add['id'],
-                    'amount' => $add['amount'],
-                    'quantity' => $add['quantity'] ?? 1,
-                    'biweek' => $add['biweek'] ?? 2,
-                    'pay_card' => $add['pay_card'] ?? 1,
+                    'discount_type_id' => $disc['discount_type_id'], // ← CORREGIDO
+                    'amount' => $disc['amount'],
+                    'quantity' => $disc['quantity'] ?? 1,
+                    'biweek' => $biweekValue, // ← CORREGIDO
+                    'pay_card' => $disc['pay_card'] ?? 1,
                 ]);
             }
+
             return ['message' => 'PayRoll edited successfully', 'status' => 201];
         } catch (\Throwable $th) {
             return ['message' => $th->getMessage(), 'status' => 500];
@@ -203,7 +255,13 @@ class PayRollRepository
             $currentYear = now()->year;
             $currentMonth = now()->month;
 
-            $payroll = PayRoll::with(['employee', 'additionalPayments', 'discountPayments', 'biweeklyPayments'])
+            $payroll = PayRoll::with([
+                'employee',
+                'additionalPayments.paymentType',
+                'discountPayments.discountType',
+                'biweeklyPayments'
+                // Quitamos 'loan' y 'campaign' de la carga eager
+            ])
                 ->where('employee_id', $employee->id)
                 ->whereYear('created_at', $currentYear)
                 ->whereMonth('created_at', $currentMonth)
@@ -213,11 +271,26 @@ class PayRollRepository
                 throw new EntityNotFoundException('Payroll not found for the given month and year');
             }
 
+            // Calcular totales
+            $totaladditionals = $payroll->additionalPayments->sum(function ($payment) {
+                return $payment->amount * $payment->quantity;
+            });
+
+            $totalDiscounts = $payroll->discountPayments->sum(function ($payment) {
+                return $payment->amount * $payment->quantity;
+            });
+
+            // Obtener loan y campaign de forma segura
+            $loan = $payroll->loan_id ? Loan::find($payroll->loan_id) : null;
+            $campaign = $payroll->campaign_id ? Campaign::find($payroll->campaign_id) : null;
+
             $data = [
                 'employee' => $payroll->employee->dni,
                 'pay_date' => $payroll->created_at->format('Y-m'),
                 'accounting_salary' => $payroll->accounting_salary,
                 'real_salary' => $payroll->real_salary,
+                'total_additionals' => $totaladditionals,
+                'total_discounts' => $totalDiscounts,
                 'additionalPayments' => $payroll->additionalPayments->map(fn($payment) => [
                     'id' => $payment->paymentType->id,
                     'description' => $payment->paymentType->description,
@@ -241,7 +314,16 @@ class PayRollRepository
                     'accounting_amount' => $biweekly->accounting_amount,
                     'discounts' => $biweekly->discounts,
                     'additionals' => $biweekly->additionals,
+                    'worked_days' => $biweekly->worked_days ?? null
                 ])->toArray(),
+                'loan' => $loan ? [
+                    'amount' => $loan->amount,
+                    'description' => $loan->description
+                ] : null,
+                'campaign' => $campaign ? [
+                    'description' => $campaign->description,
+                    'amount' => $campaign->amount
+                ] : null
             ];
 
             return [
@@ -274,7 +356,10 @@ class PayRollRepository
                 },
                 'employee.headquarter' => function ($query) {
                     $query->select('id', 'name');
-                }
+                },
+                'additionalPayments', // ← AGREGAR ESTO
+                'discountPayments',   // ← AGREGAR ESTO
+                'biweeklyPayments'    // ← AGREGAR ESTO
             ])
                 ->whereYear('created_at', $year)
                 ->whereMonth('created_at', $month)
@@ -283,6 +368,16 @@ class PayRollRepository
             return DtoResponseListPayRoll::collect(
                 $payrolls->map(function ($payroll) {
                     $emp = $payroll->employee;
+
+                    // Calcular total de adicionales y descuentos
+                    $totaladditionals = $payroll->additionalPayments->sum(function ($payment) {
+                        return $payment->amount * $payment->quantity;
+                    });
+
+                    $totalDiscounts = $payroll->discountPayments->sum(function ($payment) {
+                        return $payment->amount * $payment->quantity;
+                    });
+
                     return [
                         'name' => $emp->firstname . ' ' . $emp->lastname,
                         'dni' => $emp->dni,
@@ -290,6 +385,15 @@ class PayRollRepository
                         'pay_date' => $payroll->created_at->format('Y-m'),
                         'accounting_salary' => $payroll->accounting_salary,
                         'real_salary' => $payroll->real_salary,
+                        'discounts' => $totalDiscounts,
+                        'additionals' => $totaladditionals,
+                        'biweeklyPayments' => $payroll->biweeklyPayments->map(fn($bp) => [
+                            'biweekly' => $bp->biweekly,
+                            'accounting_amount' => $bp->accounting_amount,
+                            'real_amount' => $bp->real_amount,
+                            'additionals' => $bp->additionals,
+                            'discounts' => $bp->discounts
+                        ])->toArray()
                     ];
                 })
             );
@@ -622,12 +726,19 @@ class PayRollRepository
     }
 
     /**
-     * Calcular pago según tipo de contrato con días proporcionales
+     * Calcular pago según tipo de contrato
      */
     public function calculatePayment($employeeId, $year, $month, $periodType = null)
     {
         try {
-            $employee = Employee::with(['activeContract', 'employeeAffiliations.affiliation'])->find($employeeId);
+            $employee = Employee::with([
+                'activeContract',
+                'employeeAffiliations.affiliation',
+                'loans' => function ($query) {
+                    $query->where('start_date', '<=', now())
+                        ->where('end_date', '>=', now());
+                }
+            ])->find($employeeId);
 
             if (!$employee || !$employee->activeContract) {
                 return [
@@ -637,6 +748,12 @@ class PayRollRepository
             }
 
             $contract = $employee->activeContract;
+            $loan = $employee->loans->first();
+
+            // ========== CORRECCIÓN: CALCULAR AFFILIATION DISCOUNTS ==========
+            $affiliationDiscounts = $employee->employeeAffiliations->sum(function ($aff) use ($contract) {
+                return ($aff->percent / 100) * $contract->real_salary;
+            });
 
             // Obtener periodos según tipo de pago
             $periods = $this->calculator->getPaymentPeriods($contract->payment_type, $year, $month);
@@ -649,40 +766,43 @@ class PayRollRepository
                     continue;
                 }
 
-                // Obtener pagos adicionales y descuentos para este periodo
-                $additionalPayments = AdditionalPayment::whereHas('payRoll', function ($q) use ($employeeId, $year, $month) {
-                    $q->where('employee_id', $employeeId)
-                        ->whereYear('created_at', $year)
-                        ->whereMonth('created_at', $month);
-                })->get();
+                $payroll = PayRoll::with(['additionalPayments', 'discountPayments', 'campaign'])
+                    ->where('employee_id', $employeeId)
+                    ->whereYear('period_start', $year)
+                    ->whereMonth('period_start', $month)
+                    ->first();
 
-                $discountPayments = DiscountPayment::whereHas('payRoll', function ($q) use ($employeeId, $year, $month) {
-                    $q->where('employee_id', $employeeId)
-                        ->whereYear('created_at', $year)
-                        ->whereMonth('created_at', $month);
-                })->get();
+                if (!$payroll) {
+                    return [
+                        'status' => 404,
+                        'message' => 'Planilla no encontrada para el empleado en el periodo especificado'
+                    ];
+                }
 
-                // Calcular afiliaciones
-                $affiliationDiscounts = $employee->employeeAffiliations->sum(function ($aff) use ($contract) {
-                    return ($aff->percent / 100) * $contract->real_salary;
-                });
+                $additionalPaymentsToUse = $payroll->additionalPayments;
+                $discountPaymentsToUse = $payroll->discountPayments;
 
-                // Calcular pagos
+                // Calcular pagos INCLUYENDO CAMPAÑA
                 $paymentCalculation = $this->calculator->calculatePayments(
                     $contract,
                     $period,
-                    $additionalPayments->toArray(),
-                    $discountPayments->toArray()
+                    $additionalPaymentsToUse,
+                    $discountPaymentsToUse,
+                    $loan,
+                    $payroll->campaign
                 );
 
                 if ($paymentCalculation) {
                     // Aplicar descuentos de afiliaciones
+                    $affiliationApplied = 0;
                     if ($contract->payment_type === 'quincenal' && $period['type'] === 'quincena_2') {
                         $paymentCalculation['bank_transfer'] -= $affiliationDiscounts;
                         $paymentCalculation['discounts'] += $affiliationDiscounts;
+                        $affiliationApplied = $affiliationDiscounts;
                     } elseif ($contract->payment_type === 'mensual') {
                         $paymentCalculation['bank_transfer'] -= $affiliationDiscounts;
                         $paymentCalculation['discounts'] += $affiliationDiscounts;
+                        $affiliationApplied = $affiliationDiscounts;
                     }
 
                     $results[] = array_merge($period, $paymentCalculation, [
@@ -692,9 +812,22 @@ class PayRollRepository
                             'dni' => $employee->dni
                         ],
                         'contract_type' => $contract->payment_type,
-                        'affiliation_discounts' => $affiliationDiscounts,
+                        'affiliation_discounts' => $affiliationApplied,
                         'base_accounting_salary' => $contract->accounting_salary,
-                        'base_real_salary' => $contract->real_salary
+                        'base_real_salary' => $contract->real_salary,
+                        'has_active_loan' => $loan ? true : false,
+                        'loan_details' => $loan ? [
+                            'amount' => $loan->amount,
+                            'pay_card' => $loan->pay_card,
+                            'biweek' => $loan->biweek
+                        ] : null,
+                        'has_campaign' => $payroll->campaign ? true : false,
+                        'campaign_details' => $payroll->campaign ? [
+                            'description' => $payroll->campaign->description,
+                            'amount' => $payroll->campaign->amount,
+                            'biweek' => $payroll->campaign->biweek,
+                            'pay_card' => $payroll->campaign->pay_card ?? 1
+                        ] : null
                     ]);
                 }
             }
@@ -704,120 +837,13 @@ class PayRollRepository
                 'data' => $results
             ];
         } catch (\Exception $e) {
+            Log::error('Error calculando pagos', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return [
                 'status' => 500,
                 'message' => 'Error calculando pagos: ' . $e->getMessage()
-            ];
-        }
-    }
-
-    /**
-     * Generar pagos quincenales con cálculos proporcionales
-     */
-    public function generateProportionalBiweeklyPayments($employeeId, $year, $month, $biweekly)
-    {
-        try {
-            $employee = Employee::with(['activeContract', 'employeeAffiliations'])->find($employeeId);
-
-            if (!$employee || !$employee->activeContract) {
-                return [
-                    'status' => 404,
-                    'message' => 'Empleado o contrato activo no encontrado'
-                ];
-            }
-
-            $contract = $employee->activeContract;
-
-            // Solo para contratos quincenales
-            if ($contract->payment_type !== 'quincenal') {
-                return [
-                    'status' => 400,
-                    'message' => 'Solo aplica para contratos quincenales'
-                ];
-            }
-
-            $payroll = PayRoll::where('employee_id', $employeeId)
-                ->whereYear('created_at', $year)
-                ->whereMonth('created_at', $month)
-                ->first();
-
-            if (!$payroll) {
-                return [
-                    'status' => 404,
-                    'message' => 'No se encontró planilla para este mes'
-                ];
-            }
-
-            // Verificar si ya existe el pago quincenal
-            $existingPayment = $payroll->biweeklyPayments()->where('biweekly', $biweekly)->first();
-            if ($existingPayment) {
-                return [
-                    'status' => 409,
-                    'message' => 'El pago quincenal ya existe'
-                ];
-            }
-
-            $periods = $this->calculator->getPaymentPeriods('quincenal', $year, $month);
-            $currentPeriod = $periods[$biweekly - 1];
-
-            // Obtener adicionales y descuentos específicos del periodo
-            $additionalPayments = $payroll->additionalPayments()
-                ->where('biweek', $biweekly)
-                ->get();
-
-            $discountPayments = $payroll->discountPayments()
-                ->where('biweek', $biweekly)
-                ->get();
-
-            // Calcular pagos
-            $paymentCalculation = $this->calculator->calculatePayments(
-                $contract,
-                $currentPeriod,
-                $additionalPayments->toArray(),
-                $discountPayments->toArray()
-            );
-
-            if (!$paymentCalculation) {
-                return [
-                    'status' => 500,
-                    'message' => 'Error en el cálculo de pagos'
-                ];
-            }
-
-            // Aplicar descuentos de afiliaciones en segunda quincena
-            $affiliationDiscounts = $employee->employeeAffiliations->sum(function ($aff) use ($contract) {
-                return ($aff->percent / 100) * $contract->real_salary;
-            });
-
-            if ($biweekly === 2) {
-                $paymentCalculation['bank_transfer'] -= $affiliationDiscounts;
-                $paymentCalculation['discounts'] += $affiliationDiscounts;
-            }
-
-            // Crear registro de pago quincenal
-            $biweeklyPayment = $payroll->biweeklyPayments()->create([
-                'biweekly' => $biweekly,
-                'biweekly_date' => now(),
-                'accounting_amount' => $paymentCalculation['bank_transfer'],
-                'real_amount' => $paymentCalculation['cash'],
-                'additions' => $paymentCalculation['additions'] ?? 0,
-                'discounts' => $paymentCalculation['discounts'] ?? 0,
-                'worked_days' => $paymentCalculation['worked_days']
-            ]);
-
-            return [
-                'status' => 201,
-                'message' => 'Pago quincenal generado exitosamente',
-                'data' => array_merge($paymentCalculation, [
-                    'biweekly' => $biweekly,
-                    'period' => $currentPeriod,
-                    'affiliation_discounts' => $biweekly === 2 ? $affiliationDiscounts : 0
-                ])
-            ];
-        } catch (\Exception $e) {
-            return [
-                'status' => 500,
-                'message' => 'Error generando pago quincenal: ' . $e->getMessage()
             ];
         }
     }
@@ -832,36 +858,22 @@ class PayRollRepository
         try {
             $payroll = PayRoll::findOrFail($payrollId);
 
-            if (!$payroll->canDeletePayments()) {
+            if (!$payroll->isOpen()) {
                 return [
                     'status' => 403,
-                    'message' => 'No tiene permisos para eliminar pagos en el estado actual'
+                    'message' => 'Solo se pueden eliminar pagos cuando la planilla está ABIERTA'
                 ];
             }
 
             $biweeklyPayment = $payroll->biweeklyPayments()->findOrFail($biweeklyId);
             $biweeklyPayment->delete();
 
-            // Actualizar estado de la planilla si es necesario
-            $completedPayments = $payroll->getCompletedBiweeklyPayments();
-            $expectedPayments = $payroll->getExpectedBiweeklyPayments();
-
-            $newStatus = match (true) {
-                $completedPayments === 0 => PayRoll::STATUS_OPEN,
-                $completedPayments < $expectedPayments => PayRoll::STATUS_PARTIAL,
-                default => $payroll->status
-            };
-
-            if ($newStatus !== $payroll->status) {
-                $payroll->update(['status' => $newStatus]);
-            }
-
             return [
                 'status' => 200,
                 'message' => 'Pago eliminado exitosamente',
                 'data' => [
-                    'payroll_status' => $newStatus,
-                    'remaining_payments' => $completedPayments
+                    'payroll_status' => $payroll->status,
+                    'remaining_payments' => $payroll->getCompletedBiweeklyPayments()
                 ]
             ];
         } catch (\Exception $e) {
@@ -880,10 +892,10 @@ class PayRollRepository
         try {
             $payroll = PayRoll::findOrFail($id);
 
-            if (!$payroll->isDraft()) {
+            if (!$payroll->isClosed()) {
                 return [
                     'status' => 400,
-                    'message' => 'Solo se pueden abrir planillas en estado DRAFT'
+                    'message' => 'Solo se pueden reabrir planillas CERRADAS'
                 ];
             }
 
@@ -891,13 +903,13 @@ class PayRollRepository
 
             return [
                 'status' => 200,
-                'message' => 'Planilla abierta exitosamente',
+                'message' => 'Planilla reabierta exitosamente - AHORA ES EDITABLE',
                 'data' => $payroll
             ];
         } catch (\Exception $e) {
             return [
                 'status' => 500,
-                'message' => 'Error al abrir planilla: ' . $e->getMessage()
+                'message' => 'Error al reabrir planilla: ' . $e->getMessage()
             ];
         }
     }
@@ -910,10 +922,10 @@ class PayRollRepository
         try {
             $payroll = PayRoll::findOrFail($id);
 
-            if (!$payroll->canClose()) {
+            if (!$payroll->isOpen()) {
                 return [
-                    'status' => 403,
-                    'message' => 'No se puede cerrar la planilla en el estado actual'
+                    'status' => 400,
+                    'message' => 'Solo se pueden cerrar planillas ABIERTAS'
                 ];
             }
 
@@ -921,85 +933,69 @@ class PayRollRepository
 
             return [
                 'status' => 200,
-                'message' => 'Planilla cerrada exitosamente',
+                'message' => 'Planilla cerrada - AHORA ES SOLO LECTURA',
                 'data' => $payroll
             ];
         } catch (\Exception $e) {
+            return ['status' => 500, 'message' => 'Error: ' . $e->getMessage()];
+        }
+    }
+
+    public function reopenPayroll($id)
+    {
+        try {
+            $payroll = PayRoll::findOrFail($id);
+            $payroll->update(['status' => PayRoll::STATUS_OPEN]);
+
             return [
-                'status' => 500,
-                'message' => 'Error al cerrar planilla: ' . $e->getMessage()
+                'status' => 200,
+                'message' => 'Planilla reabierta (editable)',
+                'data' => $payroll
             ];
+        } catch (\Exception $e) {
+            return ['status' => 500, 'message' => 'Error: ' . $e->getMessage()];
         }
     }
 
     /**
-     * Bloquear una planilla para correcciones
+     * Recalcular TODOS los pagos de la planilla
      */
-    public function lockPayroll($id)
+    public function recalculateAllPayments($payrollId)
     {
         try {
-            $payroll = PayRoll::findOrFail($id);
+            $payroll = PayRoll::with(['biweeklyPayments', 'employee.activeContract'])->findOrFail($payrollId);
 
-            // Solo se puede bloquear si está en OPEN o PARTIAL
-            if (!$payroll->isOpen() && !$payroll->isPartial()) {
+            if (!$payroll->isOpen()) {
                 return [
-                    'status' => 400,
-                    'message' => 'Solo se pueden bloquear planillas en estado OPEN o PARTIAL'
+                    'status' => 403,
+                    'message' => 'Solo se pueden recalcular pagos cuando la planilla está ABIERTA'
                 ];
             }
 
-            $payroll->update(['status' => PayRoll::STATUS_LOCKED]);
+            // Eliminar todos los pagos existentes
+            $payroll->biweeklyPayments()->delete();
 
-            return [
-                'status' => 200,
-                'message' => 'Planilla bloqueada para correcciones',
-                'data' => $payroll
-            ];
-        } catch (\Exception $e) {
-            return [
-                'status' => 500,
-                'message' => 'Error al bloquear planilla: ' . $e->getMessage()
-            ];
-        }
-    }
+            // Regenerar según tipo de contrato
+            $employeeId = $payroll->employee_id;
+            $year = $payroll->period_start->year;
+            $month = $payroll->period_start->month;
 
-    /**
-     * Desbloquear una planilla
-     */
-    public function unlockPayroll($id)
-    {
-        try {
-            $payroll = PayRoll::findOrFail($id);
-
-            if (!$payroll->isLocked()) {
-                return [
-                    'status' => 400,
-                    'message' => 'Solo se pueden desbloquear planillas en estado LOCKED'
-                ];
+            if ($payroll->getPaymentType() === 'mensual') {
+                $result = $this->generateMonthlyPayment($payroll, $payroll->employee->activeContract, $payroll->employee, null);
+            } else {
+                // Regenerar ambas quincenas
+                $result1 = $this->generateBiweeklyPayment($payroll, $payroll->employee->activeContract, $payroll->employee, null, 1, $year, $month);
+                $result2 = $this->generateBiweeklyPayment($payroll, $payroll->employee->activeContract, $payroll->employee, null, 2, $year, $month);
+                $result = ['quincena_1' => $result1, 'quincena_2' => $result2];
             }
 
-            // Determinar el estado apropiado al desbloquear
-            $completedPayments = $payroll->getCompletedBiweeklyPayments();
-            $expectedPayments = $payroll->getExpectedBiweeklyPayments();
-
-            $newStatus = match (true) {
-                $completedPayments === 0 => PayRoll::STATUS_OPEN,
-                $completedPayments < $expectedPayments => PayRoll::STATUS_PARTIAL,
-                default => PayRoll::STATUS_OPEN // Volver a OPEN para permitir más ediciones
-            };
-
-            $payroll->update(['status' => $newStatus]);
-
             return [
                 'status' => 200,
-                'message' => 'Planilla desbloqueada',
-                'data' => $payroll
+                'message' => '✅ TODOS los pagos recalculados automáticamente',
+                'data' => $result
             ];
         } catch (\Exception $e) {
-            return [
-                'status' => 500,
-                'message' => 'Error al desbloquear planilla: ' . $e->getMessage()
-            ];
+            return ['status' => 500, 'message' => 'Error: ' . $e->getMessage()];
         }
     }
 
@@ -1011,10 +1007,10 @@ class PayRollRepository
         try {
             $payroll = PayRoll::with(['employee.activeContract', 'biweeklyPayments'])->findOrFail($payrollId);
 
-            if (!$payroll->canEditPayments()) {
+            if (!$payroll->isOpen()) {
                 return [
                     'status' => 403,
-                    'message' => 'No tiene permisos para editar pagos en el estado actual'
+                    'message' => 'Solo se pueden regenerar pagos cuando la planilla está ABIERTA'
                 ];
             }
 
@@ -1030,7 +1026,7 @@ class PayRollRepository
 
             $currentPeriod = $periods[$biweeklyPayment->biweekly - 1];
 
-            // Re-calcular con additions/discounts actuales
+            // Re-calcular con additionals/discounts actuales
             $additionalPayments = $payroll->additionalPayments()
                 ->where('biweek', $biweeklyPayment->biweekly)
                 ->get();
@@ -1067,7 +1063,7 @@ class PayRollRepository
             $biweeklyPayment->update([
                 'accounting_amount' => $newCalculation['bank_transfer'],
                 'real_amount' => $newCalculation['cash'],
-                'additions' => $newCalculation['additions'] ?? 0,
+                'additionals' => $newCalculation['additionals'] ?? 0,
                 'discounts' => $newCalculation['discounts'] ?? 0,
                 'worked_days' => $newCalculation['worked_days'],
                 'updated_at' => now()
@@ -1075,7 +1071,7 @@ class PayRollRepository
 
             return [
                 'status' => 200,
-                'message' => 'Pago re-calculado exitosamente',
+                'message' => '✅ Pago re-calculado automáticamente con los datos actuales',
                 'data' => [
                     'biweekly_payment' => $biweeklyPayment,
                     'calculation_details' => $newCalculation,
@@ -1088,5 +1084,243 @@ class PayRollRepository
                 'message' => 'Error al re-generar pago: ' . $e->getMessage()
             ];
         }
+    }
+
+    /**
+     * Generar pagos según tipo de contrato
+     */
+    public function generatePayments($employeeId, $year, $month, $biweekly = null)
+    {
+        try {
+            $employee = Employee::with([
+                'activeContract',
+                'employeeAffiliations',
+                'loans' => function ($query) {
+                    $query->where('start_date', '<=', now())
+                        ->where('end_date', '>=', now());
+                }
+            ])->find($employeeId);
+
+            if (!$employee || !$employee->activeContract) {
+                return [
+                    'status' => 404,
+                    'message' => 'Empleado o contrato activo no encontrado'
+                ];
+            }
+
+            $contract = $employee->activeContract;
+            $payroll = PayRoll::with(['additionalPayments', 'discountPayments'])
+                ->where('employee_id', $employeeId)
+                ->whereYear('period_start', $year)
+                ->whereMonth('period_start', $month)
+                ->first();
+
+            if (!$payroll) {
+                return [
+                    'status' => 404,
+                    'message' => 'No se encontró planilla para este mes'
+                ];
+            }
+
+            $loan = $employee->loans->first();
+
+            // Para contratos mensuales, solo un pago
+            if ($contract->payment_type === 'mensual') {
+                return $this->generateMonthlyPayment($payroll, $contract, $employee, $loan);
+            }
+
+            // Para contratos quincenales
+            if ($contract->payment_type === 'quincenal') {
+                // Validar que se especifique la quincena
+                if (!$biweekly) {
+                    return [
+                        'status' => 400,
+                        'message' => 'Para contratos quincenales debe especificar la quincena (1 o 2)'
+                    ];
+                }
+
+                // Validar que la quincena sea 1 o 2
+                if (!in_array($biweekly, [1, 2])) {
+                    return [
+                        'status' => 400,
+                        'message' => 'La quincena debe ser 1 o 2'
+                    ];
+                }
+
+                return $this->generateBiweeklyPayment($payroll, $contract, $employee, $loan, $biweekly, $year, $month);
+            }
+
+            return [
+                'status' => 400,
+                'message' => 'Tipo de contrato no válido'
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error generando pagos', [
+                'error' => $e->getMessage(),
+                'employeeId' => $employeeId
+            ]);
+            return [
+                'status' => 500,
+                'message' => 'Error generando pago: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Generar pago mensual
+     */
+    private function generateMonthlyPayment($payroll, $contract, $employee, $loan)
+    {
+        $existingPayment = $payroll->biweeklyPayments()->first();
+        if ($existingPayment) {
+            return [
+                'status' => 409,
+                'message' => 'El pago mensual ya existe'
+            ];
+        }
+
+        $period = [
+            'start' => $payroll->period_start->format('Y-m-d'),
+            'end' => $payroll->period_end->format('Y-m-d'),
+            'type' => 'mensual'
+        ];
+
+        // Cargar los payments con las relaciones INCLUYENDO CAMPAÑA
+        $payrollWithPayments = PayRoll::with([
+            'additionalPayments.paymentType',
+            'discountPayments.discountType',
+            'campaign'
+        ])->find($payroll->id);
+
+        $paymentCalculation = $this->calculator->calculatePayments(
+            $contract,
+            $period,
+            $payrollWithPayments->additionalPayments,
+            $payrollWithPayments->discountPayments,
+            $loan,
+            $payrollWithPayments->campaign
+        );
+
+        if (!$paymentCalculation) {
+            return [
+                'status' => 500,
+                'message' => 'Error en el cálculo del pago'
+            ];
+        }
+
+        $additionalsForMonth = $paymentCalculation['additionals_detail']['total'] ?? $paymentCalculation['additionals'] ?? 0;
+        $discountsForMonth = $paymentCalculation['discounts_detail']['total'] ?? $paymentCalculation['discounts'] ?? 0;
+        $campaignForMonth = $paymentCalculation['campaign_detail']['total'] ?? $paymentCalculation['campaign'] ?? 0;
+
+        // Calcular afiliaciones
+        $affiliationDiscounts = $employee->employeeAffiliations->sum(function ($aff) use ($contract) {
+            return ($aff->percent / 100) * $contract->real_salary;
+        });
+
+        $paymentCalculation['bank_transfer'] -= $affiliationDiscounts;
+        $paymentCalculation['discounts'] += $affiliationDiscounts;
+
+        // CREAR PAGO
+        $payment = $payroll->biweeklyPayments()->create([
+            'biweekly' => 1,
+            'biweekly_date' => now(),
+            'accounting_amount' => $paymentCalculation['bank_transfer'],
+            'real_amount' => $paymentCalculation['cash'],
+            'additionals' => $additionalsForMonth + $campaignForMonth,
+            'discounts' => $discountsForMonth + $affiliationDiscounts,
+            'worked_days' => $paymentCalculation['worked_days']
+        ]);
+
+        $payroll->update(['status' => PayRoll::STATUS_OPEN]);
+
+        return [
+            'status' => 201,
+            'message' => 'Pago mensual generado exitosamente',
+            'data' => array_merge($paymentCalculation, [
+                'payment_id' => $payment->id,
+                'payroll_status' => $payroll->status,
+                'affiliation_discounts' => $affiliationDiscounts,
+                'stored_additionals' => $additionalsForMonth + $campaignForMonth,
+                'stored_discounts' => $discountsForMonth + $affiliationDiscounts
+            ])
+        ];
+    }
+
+    private function generateBiweeklyPayment($payroll, $contract, $employee, $loan, $biweekly, $year, $month)
+    {
+        $existingPayment = $payroll->biweeklyPayments()->where('biweekly', $biweekly)->first();
+        if ($existingPayment) {
+            return [
+                'status' => 409,
+                'message' => "El pago quincenal {$biweekly} ya existe"
+            ];
+        }
+
+        $periods = $this->calculator->getPaymentPeriods('quincenal', $year, $month);
+        $currentPeriod = $periods[$biweekly - 1];
+
+        // Cargar los payments con las relaciones INCLUYENDO CAMPAÑA
+        $payrollWithPayments = PayRoll::with([
+            'additionalPayments.paymentType',
+            'discountPayments.discountType',
+            'campaign'
+        ])->find($payroll->id);
+
+        $paymentCalculation = $this->calculator->calculatePayments(
+            $contract,
+            $currentPeriod,
+            $payrollWithPayments->additionalPayments,
+            $payrollWithPayments->discountPayments,
+            $loan,
+            $payrollWithPayments->campaign
+        );
+
+        if (!$paymentCalculation) {
+            return [
+                'status' => 500,
+                'message' => 'Error en el cálculo del pago'
+            ];
+        }
+
+        $additionalsForBiweekly = $paymentCalculation['additionals_detail']['total'] ?? $paymentCalculation['additionals'] ?? 0;
+        $discountsForBiweekly = $paymentCalculation['discounts_detail']['total'] ?? $paymentCalculation['discounts'] ?? 0;
+        $campaignForBiweekly = $paymentCalculation['campaign_detail']['total'] ?? $paymentCalculation['campaign'] ?? 0;
+
+        // Calcular afiliaciones solo en quincena 2
+        $affiliationDiscounts = 0;
+        if ($biweekly === 2) {
+            $affiliationDiscounts = $employee->employeeAffiliations->sum(function ($aff) use ($contract) {
+                return ($aff->percent / 100) * $contract->real_salary;
+            });
+            $paymentCalculation['bank_transfer'] -= $affiliationDiscounts;
+            $paymentCalculation['discounts'] += $affiliationDiscounts;
+        }
+
+        // CREAR PAGO
+        $payment = $payroll->biweeklyPayments()->create([
+            'biweekly' => $biweekly,
+            'biweekly_date' => now(),
+            'accounting_amount' => $paymentCalculation['bank_transfer'],
+            'real_amount' => $paymentCalculation['cash'],
+            'additionals' => $additionalsForBiweekly + $campaignForBiweekly,
+            'discounts' => $discountsForBiweekly + $affiliationDiscounts,
+            'worked_days' => $paymentCalculation['worked_days']
+        ]);
+
+        $payroll->update(['status' => PayRoll::STATUS_OPEN]);
+
+        return [
+            'status' => 201,
+            'message' => "Pago quincenal {$biweekly} generado exitosamente",
+            'data' => array_merge($paymentCalculation, [
+                'payment_id' => $payment->id,
+                'payroll_status' => $payroll->status,
+                'affiliation_discounts' => $affiliationDiscounts,
+                'stored_additionals' => $additionalsForBiweekly + $campaignForBiweekly,
+                'stored_discounts' => $discountsForBiweekly + $affiliationDiscounts,
+                'completed_payments' => $payroll->getCompletedBiweeklyPayments(),
+                'expected_payments' => $payroll->getExpectedBiweeklyPayments()
+            ])
+        ];
     }
 }
