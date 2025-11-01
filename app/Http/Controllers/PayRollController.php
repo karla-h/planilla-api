@@ -190,36 +190,6 @@ class PayRollController extends Controller
         }
     }
 
-    public function lockPayroll($id): JsonResponse
-    {
-        try {
-            Log::info('PayRollController@lockPayroll - Bloqueando planilla', ['id' => $id]);
-            $response = $this->service->lockPayroll($id);
-            return response()->json($response, $response['status']);
-        } catch (\Exception $e) {
-            Log::error('Error en PayRollController@lockPayroll', [
-                'error' => $e->getMessage(),
-                'id' => $id
-            ]);
-            return response()->json(['message' => 'Error al bloquear planilla'], 500);
-        }
-    }
-
-    public function unlockPayroll($id): JsonResponse
-    {
-        try {
-            Log::info('PayRollController@unlockPayroll - Desbloqueando planilla', ['id' => $id]);
-            $response = $this->service->unlockPayroll($id);
-            return response()->json($response, $response['status']);
-        } catch (\Exception $e) {
-            Log::error('Error en PayRollController@unlockPayroll', [
-                'error' => $e->getMessage(),
-                'id' => $id
-            ]);
-            return response()->json(['message' => 'Error al desbloquear planilla'], 500);
-        }
-    }
-
     public function getPayrollPermissions($id): JsonResponse
     {
         try {
@@ -309,15 +279,68 @@ class PayRollController extends Controller
         }
     }
 
-    // En PayRollController
-public function generatePayment(Request $request, $employeeId): JsonResponse
-{
-    // Este método RECIBE la request y llama al service
-    $year = $request->input('year', now()->year);
-    $month = $request->input('month', now()->month);
-    $biweekly = $request->input('biweekly', null);
+    public function generatePayment(Request $request, $employeeId): JsonResponse
+    {
+        // Este método RECIBE la request y llama al service
+        $year = $request->input('year', now()->year);
+        $month = $request->input('month', now()->month);
+        $biweekly = $request->input('biweekly', null);
 
-    $response = $this->service->generatePayments($employeeId, $year, $month, $biweekly);
-    return response()->json($response, $response['status']);
-}
+        $response = $this->service->generatePayments($employeeId, $year, $month, $biweekly);
+        return response()->json($response, $response['status']);
+    }
+
+    public function getEmployeePayrolls(Request $request, $dni): JsonResponse
+    {
+        try {
+            $filters = [
+                'year' => $request->input('year'),
+                'month' => $request->input('month')
+            ];
+
+            $response = $this->service->getEmployeePayrolls($dni, $filters);
+            return response()->json($response, $response['status']);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 500,
+                'message' => 'Error al obtener planillas del empleado: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getEmployeeBiweeks(Request $request, $dni): JsonResponse
+    {
+        try {
+            $filters = [
+                'year' => $request->input('year'),
+                'month' => $request->input('month')
+            ];
+
+            $response = $this->service->getEmployeeBiweeks($dni, $filters);
+            return response()->json($response, $response['status']);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 500,
+                'message' => 'Error al obtener quincenas del empleado: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getPayrollBiweeks(Request $request, $payrollId): JsonResponse
+    {
+        try {
+            $filters = [
+                'year' => $request->input('year'),
+                'month' => $request->input('month')
+            ];
+
+            $response = $this->service->getPayrollBiweeks($payrollId, $filters);
+            return response()->json($response, $response['status']);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 500,
+                'message' => 'Error al obtener quincenas de la planilla: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

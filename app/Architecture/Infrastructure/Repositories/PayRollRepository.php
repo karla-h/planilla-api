@@ -21,6 +21,7 @@ use App\Models\PaymentType;
 use App\Models\PayRoll;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\FacadesLog;
 
@@ -186,62 +187,74 @@ class PayRollRepository
     }
 
     public function edit($key, $request)
-    {
-        try {
-            $employee = Employee::where('dni', $key)->first();
-            if (!$employee) {
-                return ['message' => 'Employee not found', 'status' => 404];
-            }
-
-            $currentYear = now()->year;
-            $currentMonth = now()->month;
-            $payroll = Payroll::where('employee_id', $employee->id)
-                ->whereYear('created_at', $currentYear)
-                ->whereMonth('created_at', $currentMonth)
-                ->first();
-
-            if (!$payroll) {
-                return ['message' => 'PayRoll not found', 'status' => 404];
-            }
-
-            // Obtener tipo de contrato para determinar si es mensual
-            $activeContract = $employee->activeContract();
-            $isMonthly = $activeContract && $activeContract->payment_type === 'mensual';
-
-            AdditionalPayment::where('pay_roll_id', $payroll->id)->delete();
-            DiscountPayment::where('pay_roll_id', $payroll->id)->delete();
-
-            foreach ($request['additionalPayments'] as $add) {
-                $biweekValue = $isMonthly ? null : ($add['biweek'] ?? 1);
-
-                AdditionalPayment::create([
-                    'pay_roll_id' => $payroll->id,
-                    'payment_type_id' => $add['payment_type_id'], // ← CORREGIDO
-                    'amount' => $add['amount'],
-                    'quantity' => $add['quantity'] ?? 1,
-                    'biweek' => $biweekValue, // ← CORREGIDO
-                    'pay_card' => $add['pay_card'] ?? 1,
-                ]);
-            }
-
-            foreach ($request['discountPayments'] as $disc) {
-                $biweekValue = $isMonthly ? null : ($disc['biweek'] ?? 1);
-
-                DiscountPayment::create([
-                    'pay_roll_id' => $payroll->id,
-                    'discount_type_id' => $disc['discount_type_id'], // ← CORREGIDO
-                    'amount' => $disc['amount'],
-                    'quantity' => $disc['quantity'] ?? 1,
-                    'biweek' => $biweekValue, // ← CORREGIDO
-                    'pay_card' => $disc['pay_card'] ?? 1,
-                ]);
-            }
-
-            return ['message' => 'PayRoll edited successfully', 'status' => 201];
-        } catch (\Throwable $th) {
-            return ['message' => $th->getMessage(), 'status' => 500];
+{
+    DB::beginTransaction();
+    try {
+        $employee = Employee::where('dni', $key)->first();
+        if (!$employee) {
+            return ['message' => 'Employee not found', 'status' => 404];
         }
+
+        $currentYear = now()->year;
+        $currentMonth = now()->month;
+        $payroll = Payroll::where('employee_id', $employee->id)
+            ->whereYear('created_at', $currentYear)
+            ->whereMonth('created_at', $currentMonth)
+            ->first();
+
+        if (!$payroll) {
+            return ['message' => 'PayRoll not found', 'status' => 404];
+        }
+
+        // Validar que la planilla esté abierta para editar
+        if (!$payroll->isOpen()) {
+            return [
+                'message' => 'No se puede editar una planilla cerrada',
+                'status' => 403
+            ];
+        }
+
+        $activeContract = $employee->activeContract();
+        $isMonthly = $activeContract && $activeContract->payment_type === 'mensual';
+
+        // Eliminar y recrear los payments
+        AdditionalPayment::where('pay_roll_id', $payroll->id)->delete();
+        DiscountPayment::where('pay_roll_id', $payroll->id)->delete();
+
+        foreach ($request['additionalPayments'] as $add) {
+            $biweekValue = $isMonthly ? null : ($add['biweek'] ?? 1);
+
+            AdditionalPayment::create([
+                'pay_roll_id' => $payroll->id,
+                'payment_type_id' => $add['payment_type_id'],
+                'amount' => $add['amount'],
+                'quantity' => $add['quantity'] ?? 1,
+                'biweek' => $biweekValue,
+                'pay_card' => $add['pay_card'] ?? 1,
+            ]);
+        }
+
+        foreach ($request['discountPayments'] as $disc) {
+            $biweekValue = $isMonthly ? null : ($disc['biweek'] ?? 1);
+
+            DiscountPayment::create([
+                'pay_roll_id' => $payroll->id,
+                'discount_type_id' => $disc['discount_type_id'],
+                'amount' => $disc['amount'],
+                'quantity' => $disc['quantity'] ?? 1,
+                'biweek' => $biweekValue,
+                'pay_card' => $disc['pay_card'] ?? 1,
+            ]);
+        }
+
+        DB::commit();
+
+        return ['message' => 'PayRoll edited successfully', 'status' => 201];
+    } catch (\Throwable $th) {
+        DB::rollBack();
+        return ['message' => 'Error processing request', 'status' => 500];
     }
+}
 
     public function findBy($key)
     {

@@ -13,7 +13,7 @@ class ContractService
     public function findAll()
     {
         try {
-            return Contract::with(['employee' => function($query) {
+            return Contract::with(['employee' => function ($query) {
                 $query->select('id', 'firstname', 'lastname', 'dni');
             }])->get();
         } catch (\Exception $e) {
@@ -44,7 +44,7 @@ class ContractService
             }
 
             $contract = Contract::create($data);
-            
+
             DB::commit();
 
             Log::info('Contrato creado exitosamente ID: ' . $contract->id);
@@ -52,11 +52,10 @@ class ContractService
             return [
                 'status' => 201,
                 'message' => 'Contrato creado exitosamente',
-                'data' => $contract->load(['employee' => function($query) {
+                'data' => $contract->load(['employee' => function ($query) {
                     $query->select('id', 'firstname', 'lastname', 'dni');
                 }])
             ];
-
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Error en ContractService@create: ' . $e->getMessage());
@@ -71,14 +70,14 @@ class ContractService
     {
         try {
             Log::info('Buscando contrato ID: ' . $id);
-            $contract = Contract::with(['employee' => function($query) {
+            $contract = Contract::with(['employee' => function ($query) {
                 $query->select('id', 'firstname', 'lastname', 'dni');
             }])->find($id);
-            
+
             if (!$contract) {
                 throw new EntityNotFoundException('Contrato no encontrado');
             }
-            
+
             return $contract;
         } catch (EntityNotFoundException $e) {
             throw $e;
@@ -92,10 +91,12 @@ class ContractService
     {
         DB::beginTransaction();
         try {
-            Log::info('Actualizando contrato ID: ' . $id, $data);
-
             $contract = $this->findBy($id);
-            
+
+            // Verificar si está cambiando el tipo de pago
+            $isChangingPaymentType = isset($data['payment_type']) &&
+                $data['payment_type'] !== $contract->payment_type;
+
             // Si se está activando este contrato, desactivar otros
             if (isset($data['status_code']) && $data['status_code'] === 'active') {
                 Contract::where('employee_id', $contract->employee_id)
@@ -105,25 +106,28 @@ class ContractService
             }
 
             $contract->update($data);
-            
+
             DB::commit();
 
-            Log::info('Contrato actualizado exitosamente ID: ' . $id);
-
-            return [
+            $response = [
                 'status' => 200,
                 'message' => 'Contrato actualizado exitosamente'
             ];
 
+            // Advertencia si cambió el tipo de pago
+            if ($isChangingPaymentType) {
+                $response['warning'] = 'El cambio de tipo de pago afectará las próximas planillas creadas';
+            }
+
+            return $response;
         } catch (EntityNotFoundException $e) {
             DB::rollBack();
             throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Error en ContractService@edit: ' . $e->getMessage());
             return [
                 'status' => 500,
-                'message' => 'Error al actualizar contrato: ' . $e->getMessage()
+                'message' => 'Error al actualizar contrato'
             ];
         }
     }
@@ -136,7 +140,7 @@ class ContractService
 
             $contract = $this->findBy($id);
             $contract->delete();
-            
+
             DB::commit();
 
             Log::info('Contrato eliminado exitosamente ID: ' . $id);
@@ -145,7 +149,6 @@ class ContractService
                 'status' => 200,
                 'message' => 'Contrato eliminado exitosamente'
             ];
-
         } catch (EntityNotFoundException $e) {
             DB::rollBack();
             throw $e;
@@ -166,13 +169,13 @@ class ContractService
             Log::info('Terminando contrato ID: ' . $id . ' con razón: ' . $reason);
 
             $contract = $this->findBy($id);
-            
+
             $contract->update([
                 'termination_date' => now(),
                 'termination_reason' => $reason,
                 'status_code' => 'terminated'
             ]);
-            
+
             DB::commit();
 
             Log::info('Contrato terminado exitosamente ID: ' . $id);
@@ -181,7 +184,6 @@ class ContractService
                 'status' => 200,
                 'message' => 'Contrato terminado exitosamente'
             ];
-
         } catch (EntityNotFoundException $e) {
             DB::rollBack();
             throw $e;
@@ -207,7 +209,7 @@ class ContractService
 
             $contract = Contract::where('employee_id', $employeeId)
                 ->where('status_code', 'active')
-                ->with(['employee' => function($query) {
+                ->with(['employee' => function ($query) {
                     $query->select('id', 'firstname', 'lastname', 'dni');
                 }])
                 ->first();
@@ -217,7 +219,6 @@ class ContractService
             }
 
             return $contract;
-
         } catch (EntityNotFoundException $e) {
             throw $e;
         } catch (\Exception $e) {
@@ -237,12 +238,11 @@ class ContractService
             }
 
             return Contract::where('employee_id', $employeeId)
-                ->with(['employee' => function($query) {
+                ->with(['employee' => function ($query) {
                     $query->select('id', 'firstname', 'lastname', 'dni');
                 }])
                 ->orderBy('hire_date', 'desc')
                 ->get();
-
         } catch (EntityNotFoundException $e) {
             throw $e;
         } catch (\Exception $e) {
@@ -259,7 +259,7 @@ class ContractService
 
             $contract = $this->findBy($id);
             $contract->update(['status_code' => 'suspended']);
-            
+
             DB::commit();
 
             Log::info('Contrato suspendido exitosamente ID: ' . $id);
@@ -268,7 +268,6 @@ class ContractService
                 'status' => 200,
                 'message' => 'Contrato suspendido exitosamente'
             ];
-
         } catch (EntityNotFoundException $e) {
             DB::rollBack();
             throw $e;
@@ -289,7 +288,7 @@ class ContractService
             Log::info('Activando contrato ID: ' . $id);
 
             $contract = $this->findBy($id);
-            
+
             // Desactivar otros contratos activos del mismo empleado
             Contract::where('employee_id', $contract->employee_id)
                 ->where('id', '!=', $id)
@@ -297,7 +296,7 @@ class ContractService
                 ->update(['status_code' => 'terminated']);
 
             $contract->update(['status_code' => 'active']);
-            
+
             DB::commit();
 
             Log::info('Contrato activado exitosamente ID: ' . $id);
@@ -306,7 +305,6 @@ class ContractService
                 'status' => 200,
                 'message' => 'Contrato activado exitosamente'
             ];
-
         } catch (EntityNotFoundException $e) {
             DB::rollBack();
             throw $e;

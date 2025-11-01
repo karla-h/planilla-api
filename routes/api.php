@@ -84,3 +84,8 @@ Route::post('biweekly-payments/create-all', [BiweeklyPaymentController::class, '
 // Cálculo de pagos
 Route::post('pay-rolls/employee/{employeeId}/calculate-payment', [PayRollController::class, 'calculatePayment']);
 Route::post('pay-rolls/employee/{employeeId}/generate-payment', [PayRollController::class, 'generatePayment']);
+
+//listaar
+Route::post('employee/payrolls/{dni}', [PayRollController::class, 'getEmployeePayrolls']);
+Route::post('employee/biweeks/{dni}', [PayRollController::class, 'getEmployeeBiweeks']);
+Route::post('payrolls/biweeks/{payrollId}', [PayRollController::class, 'getPayrollBiweeks']);
