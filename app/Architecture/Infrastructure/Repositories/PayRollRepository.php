@@ -175,12 +175,12 @@ class PayRollRepository
             ];
         } catch (\Throwable $th) {
             Log::error('Error en PayRollRepository@create', [
-                'message' => $th->getMessage(),
+                'message' => $th-> __toString(),
                 'trace' => $th->getTraceAsString()
             ]);
 
             return [
-                'message' => 'Error, data cannot be processed: ' . $th->getMessage(),
+                'message' => 'Error, data cannot be processed: ' . $th-> __toString(),
                 'status' => 500
             ];
         }
@@ -346,77 +346,185 @@ class PayRollRepository
             ];
         } catch (EntityNotFoundException $e) {
             return [
-                'message' => $e->getMessage(),
+                'message' => $e-> __toString(),
                 'status' => 404
             ];
         } catch (\Throwable $th) {
             return [
-                'message' => 'Error retrieving payroll data: ' . $th->getMessage(),
+                'message' => 'Error retrieving payroll data: ' . $th-> __toString(),
                 'status' => 500
             ];
         }
     }
 
-    public function findAll($request)
-    {
-        try {
-            $year = $request['year'] ?? now()->year;
-            $month = $request['month'] ?? now()->month;
+    // En PayRollRepository.php - AGREGAR ESTE MÉTODO
+public function findById($id)
+{
+    try {
+        $payroll = PayRoll::with([
+            'employee',
+            'additionalPayments.paymentType',
+            'discountPayments.discountType',
+            'biweeklyPayments',
+            'loan',
+            'campaign'
+        ])->find($id);
 
-            $payrolls = PayRoll::with([
-                'employee' => function ($query) {
-                    $query->withTrashed()->select('id', 'dni', 'firstname', 'lastname', 'headquarter_id');
-                },
-                'employee.headquarter' => function ($query) {
-                    $query->select('id', 'name');
-                },
-                'additionalPayments', // ← AGREGAR ESTO
-                'discountPayments',   // ← AGREGAR ESTO
-                'biweeklyPayments'    // ← AGREGAR ESTO
-            ])
-                ->whereYear('created_at', $year)
-                ->whereMonth('created_at', $month)
-                ->get();
-
-            return DtoResponseListPayRoll::collect(
-                $payrolls->map(function ($payroll) {
-                    $emp = $payroll->employee;
-
-                    // Calcular total de adicionales y descuentos
-                    $totaladditionals = $payroll->additionalPayments->sum(function ($payment) {
-                        return $payment->amount * $payment->quantity;
-                    });
-
-                    $totalDiscounts = $payroll->discountPayments->sum(function ($payment) {
-                        return $payment->amount * $payment->quantity;
-                    });
-
-                    return [
-                        'name' => $emp->firstname . ' ' . $emp->lastname,
-                        'dni' => $emp->dni,
-                        'headquarter' => $emp->headquarter ? $emp->headquarter->name : 'N/A',
-                        'pay_date' => $payroll->created_at->format('Y-m'),
-                        'accounting_salary' => $payroll->accounting_salary,
-                        'real_salary' => $payroll->real_salary,
-                        'discounts' => $totalDiscounts,
-                        'additionals' => $totaladditionals,
-                        'biweeklyPayments' => $payroll->biweeklyPayments->map(fn($bp) => [
-                            'biweekly' => $bp->biweekly,
-                            'accounting_amount' => $bp->accounting_amount,
-                            'real_amount' => $bp->real_amount,
-                            'additionals' => $bp->additionals,
-                            'discounts' => $bp->discounts
-                        ])->toArray()
-                    ];
-                })
-            );
-        } catch (\Throwable $th) {
-            return response()->json([
-                'message' => 'Error retrieving payrolls: ' . $th->getMessage(),
-                'status' => 500
-            ], 500);
+        if (!$payroll) {
+            throw new EntityNotFoundException('Payroll not found');
         }
+
+        // Calcular totales
+        $totalAdditionals = $payroll->additionalPayments->sum(function ($payment) {
+            return $payment->amount * $payment->quantity;
+        });
+
+        $totalDiscounts = $payroll->discountPayments->sum(function ($payment) {
+            return $payment->amount * $payment->quantity;
+        });
+
+        $data = [
+            'id' => $payroll->id,
+            'employee_id' => $payroll->employee_id,
+            'employee' => [
+                'dni' => $payroll->employee->dni,
+                'name' => $payroll->employee->firstname . ' ' . $payroll->employee->lastname
+            ],
+            'period_start' => $payroll->period_start->format('Y-m-d'),
+            'period_end' => $payroll->period_end->format('Y-m-d'),
+            'period' => $payroll->period_start->format('Y-m') . ' a ' . $payroll->period_end->format('Y-m'),
+            'status' => $payroll->status,
+            'accounting_salary' => $payroll->accounting_salary,
+            'real_salary' => $payroll->real_salary,
+            'contract_type' => $payroll->employee->activeContract ? $payroll->employee->activeContract->payment_type : 'N/A',
+            'contract_status' => $payroll->employee->activeContract ? $payroll->employee->activeContract->status_code : 'no-contract',
+            'affiliation_discounts_total' => $payroll->employee->employeeAffiliations->sum(function ($aff) use ($payroll) {
+                return ($aff->percent / 100) * $payroll->real_salary;
+            }),
+            'totals' => [
+                'additionals' => $totalAdditionals,
+                'discounts' => $totalDiscounts,
+                'biweekly' => [
+                    1 => ['additionals' => 0, 'discounts' => 0],
+                    2 => ['additionals' => 0, 'discounts' => 0]
+                ]
+            ],
+            'biweekly_count' => $payroll->biweeklyPayments->count(),
+            'biweeks' => $payroll->biweeklyPayments->map(function ($biweekly) {
+                return [
+                    'id' => $biweekly->id,
+                    'number' => $biweekly->biweekly,
+                    'date' => $biweekly->biweekly_date ? $biweekly->biweekly_date->format('Y-m-d') : null,
+                    'real_amount' => $biweekly->real_amount,
+                    'accounting_amount' => $biweekly->accounting_amount,
+                    'additionals' => $biweekly->additionals,
+                    'discounts' => $biweekly->discounts,
+                    'worked_days' => $biweekly->worked_days
+                ];
+            })->values(),
+            'additional_payments' => $payroll->additionalPayments->map(function ($payment) {
+                return [
+                    'id' => $payment->id,
+                    'description' => $payment->paymentType ? $payment->paymentType->description : 'N/A',
+                    'amount' => $payment->amount,
+                    'quantity' => $payment->quantity,
+                    'biweek' => $payment->biweek,
+                    'pay_card' => $payment->pay_card
+                ];
+            })->values(),
+            'discount_payments' => $payroll->discountPayments->map(function ($discount) {
+                return [
+                    'id' => $discount->id,
+                    'description' => $discount->discountType ? $discount->discountType->description : 'N/A',
+                    'amount' => $discount->amount,
+                    'quantity' => $discount->quantity,
+                    'biweek' => $discount->biweek,
+                    'pay_card' => $discount->pay_card
+                ];
+            })->values()
+        ];
+
+        return [
+            'message' => 'Payroll data retrieved successfully',
+            'data' => $data,
+            'status' => 200
+        ];
+    } catch (EntityNotFoundException $e) {
+        return [
+            'message' => $e->getMessage(),
+            'status' => 404
+        ];
+    } catch (\Throwable $th) {
+        return [
+            'message' => 'Error retrieving payroll data: ' . $th->getMessage(),
+            'status' => 500
+        ];
     }
+}
+
+public function findAll($request)
+{
+    try {
+        $year = $request['year'] ?? now()->year;
+        $month = $request['month'] ?? now()->month;
+
+        $payrolls = PayRoll::with([
+            'employee' => function ($query) {
+                $query->withTrashed()->select('id', 'dni', 'firstname', 'lastname', 'headquarter_id');
+            },
+            'employee.headquarter' => function ($query) {
+                $query->select('id', 'name');
+            },
+            'additionalPayments',
+            'discountPayments',
+            'biweeklyPayments'
+        ])
+            ->whereYear('created_at', $year)
+            ->whereMonth('created_at', $month)
+            ->get();
+
+        // ✅ CORRECCIÓN: Incluir el ID de la planilla en la respuesta
+        return DtoResponseListPayRoll::collect(
+            $payrolls->map(function ($payroll) {
+                $emp = $payroll->employee;
+
+                // Calcular total de adicionales y descuentos
+                $totalAdditionals = $payroll->additionalPayments->sum(function ($payment) {
+                    return $payment->amount * $payment->quantity;
+                });
+
+                $totalDiscounts = $payroll->discountPayments->sum(function ($payment) {
+                    return $payment->amount * $payment->quantity;
+                });
+
+                return [
+                    'id' => $payroll->id, // ✅ AGREGAR ESTA LÍNEA
+                    'name' => $emp->firstname . ' ' . $emp->lastname,
+                    'dni' => $emp->dni,
+                    'headquarter' => $emp->headquarter ? $emp->headquarter->name : 'N/A',
+                    'pay_date' => $payroll->created_at->format('Y-m'),
+                    'accounting_salary' => $payroll->accounting_salary,
+                    'real_salary' => $payroll->real_salary,
+                    'discounts' => $totalDiscounts,
+                    'additionals' => $totalAdditionals,
+                    'biweeklyPayments' => $payroll->biweeklyPayments->map(fn($bp) => [
+                        'biweekly' => $bp->biweekly,
+                        'accounting_amount' => $bp->accounting_amount,
+                        'real_amount' => $bp->real_amount,
+                        'additionals' => $bp->additionals,
+                        'discounts' => $bp->discounts
+                    ])->toArray(),
+                    'status' => $payroll->status // ✅ También agregar el estado si es necesario
+                ];
+            })
+        );
+    } catch (\Throwable $th) {
+        return response()->json([
+            'message' => 'Error retrieving payrolls: ' . $th-> __toString(),
+            'status' => 500
+        ], 500);
+    }
+}
 
     public function delete($key)
     {
@@ -486,7 +594,7 @@ class PayRollRepository
         } catch (ModelNotFoundException $e) {
             return response()->json(['message' => 'Payroll not found'], 404);
         } catch (\Throwable $e) {
-            return response()->json(['message' => 'Error: ' . $e->getMessage()], 500);
+            return response()->json(['message' => 'Error: ' . $e-> __toString()], 500);
         }
     }
 
@@ -567,94 +675,117 @@ class PayRollRepository
 
             return response()->json($result, 200);
         } catch (\InvalidArgumentException $e) {
-            return response()->json(['error' => 'Invalid input', 'message' => $e->getMessage()], 400);
+            return response()->json(['error' => 'Invalid input', 'message' => $e-> __toString()], 400);
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to fetch payrolls', 'message' => $e->getMessage()], 500);
+            return response()->json(['error' => 'Failed to fetch payrolls', 'message' => $e-> __toString()], 500);
         }
     }
 
-    public function createForAllEmployees()
-    {
-        try {
-            $currentYear = now()->year;
-            $currentMonth = now()->month;
+    // En el método createForAllEmployees() - CORREGIR
+public function createForAllEmployees()
+{
+    try {
+        $currentYear = now()->year;
+        $currentMonth = now()->month;
 
-            $employees = Employee::all();
+        $employees = Employee::all();
 
-            $payrollsCreated = 0;
-            $payrollsSkipped = 0;
+        $payrollsCreated = 0;
+        $payrollsSkipped = 0;
 
-            foreach ($employees as $employee) {
-                $existingPayroll = Payroll::where('employee_id', $employee->id)
-                    ->whereYear('created_at', $currentYear)
-                    ->whereMonth('created_at', $currentMonth)
-                    ->first();
+        foreach ($employees as $employee) {
+            $existingPayroll = PayRoll::where('employee_id', $employee->id)
+                ->whereYear('created_at', $currentYear)
+                ->whereMonth('created_at', $currentMonth)
+                ->first();
 
-                if ($existingPayroll) {
-                    $payrollsSkipped++;
-                    continue;
-                }
-
-                $aux = $employee->activeContract();
-                if (!$aux) {
-                    $payrollsSkipped++;
-                    continue;
-                }
-
-                $loan = Loan::where('employee', $employee->dni)
-                    ->whereDate('start_date', '<=', now())
-                    ->whereDate('end_date', '>=', now())
-                    ->first();
-
-                $payroll = Payroll::create([
-                    'accounting_salary' => $aux->accounting_salary,
-                    'real_salary' => $aux->real_salary,
-                    'employee_id' => $employee->id,
-                    'loan_id' => $loan ? $loan->id : null
-                ]);
-
-                $payrollsCreated++;
-
-                $extras = Extra::where('employee', $payroll->employee->dni)
-                    ->whereYear('apply_date', now()->year)
-                    ->whereMonth('apply_date', now()->month)
-                    ->get();
-
-                if ($extras->isEmpty()) {
-                    continue;
-                }
-                $paymentTypes = PaymentType::whereIn('description', $extras->pluck('description'))->get();
-
-                foreach ($extras as $extra) {
-                    $paymentType = $paymentTypes->firstWhere('description', $extra->description);
-
-                    if (!$paymentType) {
-                        continue;
-                    }
-
-                    AdditionalPayment::create([
-                        'pay_roll_id' => $payroll->id,
-                        'payment_type_id' => $paymentType->id,
-                        'amount' => $extra->amount,
-                        'quantity' => $extra->quantity ?? 1,
-                        'biweek' => 1,
-                    ]);
-                }
-
-                Extra::where('employee', $employee->dni)
-                    ->whereYear('apply_date', now()->year)
-                    ->whereMonth('apply_date', now()->month)
-                    ->delete();
+            if ($existingPayroll) {
+                $payrollsSkipped++;
+                continue;
             }
 
-            return [
-                'message' => "Payrolls created successfully: $payrollsCreated, Skipped: $payrollsSkipped",
-                'status' => 201
-            ];
-        } catch (\Throwable $th) {
-            return ['message' => 'Error processing payrolls: ' . $th->getMessage(), 'status' => 500];
+            // ✅ CORRECCIÓN: Obtener el contrato activo correctamente
+            $activeContract = Contract::where('employee_id', $employee->id)
+                ->where('status_code', 'active')
+                ->first();
+
+            if (!$activeContract) {
+                $payrollsSkipped++;
+                continue;
+            }
+
+            $loan = Loan::where('employee', $employee->dni)
+                ->whereDate('start_date', '<=', now())
+                ->whereDate('end_date', '>=', now())
+                ->first();
+
+            // ✅ CORRECCIÓN: Usar los datos del contrato activo
+            $payroll = PayRoll::create([
+                'accounting_salary' => $activeContract->accounting_salary,
+                'real_salary' => $activeContract->real_salary,
+                'employee_id' => $employee->id,
+                'loan_id' => $loan ? $loan->id : null,
+                'status' => PayRoll::STATUS_OPEN, // ✅ AGREGAR ESTADO
+                'period_start' => now()->startOfMonth(), // ✅ AGREGAR PERIODO
+                'period_end' => now()->endOfMonth()
+            ]);
+
+            $payrollsCreated++;
+
+            // Procesar extras si existen
+            $extras = Extra::where('employee', $employee->dni)
+                ->whereYear('apply_date', now()->year)
+                ->whereMonth('apply_date', now()->month)
+                ->get();
+
+            if ($extras->isEmpty()) {
+                continue;
+            }
+
+            $paymentTypes = PaymentType::whereIn('description', $extras->pluck('description'))->get();
+
+            foreach ($extras as $extra) {
+                $paymentType = $paymentTypes->firstWhere('description', $extra->description);
+
+                if (!$paymentType) {
+                    continue;
+                }
+
+                $biweek = $activeContract->payment_type === 'mensual' ? null : 1;
+
+                AdditionalPayment::create([
+                    'pay_roll_id' => $payroll->id,
+                    'payment_type_id' => $paymentType->id,
+                    'amount' => $extra->amount,
+                    'quantity' => $extra->quantity ?? 1,
+                    'biweek' => $biweek,
+                    'pay_card' => 1, // Valor por defecto
+                ]);
+            }
+
+            // Eliminar extras procesados
+            Extra::where('employee', $employee->dni)
+                ->whereYear('apply_date', now()->year)
+                ->whereMonth('apply_date', now()->month)
+                ->delete();
         }
+
+        return [
+            'message' => "Planillas creadas exitosamente: $payrollsCreated, Omitidas: $payrollsSkipped",
+            'status' => 201
+        ];
+    } catch (\Throwable $th) {
+        Log::error('Error en createForAllEmployees', [
+            'message' => $th->getMessage(),
+            'trace' => $th->getTraceAsString()
+        ]);
+        
+        return [
+            'message' => 'Error procesando planillas: ' . $th->getMessage(),
+            'status' => 500
+        ];
     }
+}
 
     public function createPayrollsForSpecificEmployees($request)
     {
@@ -734,7 +865,7 @@ class PayRollRepository
                 'status' => 201
             ];
         } catch (\Throwable $th) {
-            return ['message' => 'Error processing payrolls: ' . $th->getMessage(), 'status' => 500];
+            return ['message' => 'Error processing payrolls: ' . $th-> __toString(), 'status' => 500];
         }
     }
 
@@ -851,12 +982,12 @@ class PayRollRepository
             ];
         } catch (\Exception $e) {
             Log::error('Error calculando pagos', [
-                'error' => $e->getMessage(),
+                'error' => $e-> __toString(),
                 'trace' => $e->getTraceAsString()
             ]);
             return [
                 'status' => 500,
-                'message' => 'Error calculando pagos: ' . $e->getMessage()
+                'message' => 'Error calculando pagos: ' . $e-> __toString()
             ];
         }
     }
@@ -892,7 +1023,7 @@ class PayRollRepository
         } catch (\Exception $e) {
             return [
                 'status' => 500,
-                'message' => 'Error al eliminar pago: ' . $e->getMessage()
+                'message' => 'Error al eliminar pago: ' . $e-> __toString()
             ];
         }
     }
@@ -922,7 +1053,7 @@ class PayRollRepository
         } catch (\Exception $e) {
             return [
                 'status' => 500,
-                'message' => 'Error al reabrir planilla: ' . $e->getMessage()
+                'message' => 'Error al reabrir planilla: ' . $e-> __toString()
             ];
         }
     }
@@ -950,7 +1081,7 @@ class PayRollRepository
                 'data' => $payroll
             ];
         } catch (\Exception $e) {
-            return ['status' => 500, 'message' => 'Error: ' . $e->getMessage()];
+            return ['status' => 500, 'message' => 'Error: ' . $e-> __toString()];
         }
     }
 
@@ -966,7 +1097,7 @@ class PayRollRepository
                 'data' => $payroll
             ];
         } catch (\Exception $e) {
-            return ['status' => 500, 'message' => 'Error: ' . $e->getMessage()];
+            return ['status' => 500, 'message' => 'Error: ' . $e-> __toString()];
         }
     }
 
@@ -1008,7 +1139,7 @@ class PayRollRepository
                 'data' => $result
             ];
         } catch (\Exception $e) {
-            return ['status' => 500, 'message' => 'Error: ' . $e->getMessage()];
+            return ['status' => 500, 'message' => 'Error: ' . $e-> __toString()];
         }
     }
 
@@ -1094,7 +1225,7 @@ class PayRollRepository
         } catch (\Exception $e) {
             return [
                 'status' => 500,
-                'message' => 'Error al re-generar pago: ' . $e->getMessage()
+                'message' => 'Error al re-generar pago: ' . $e-> __toString()
             ];
         }
     }
@@ -1169,12 +1300,12 @@ class PayRollRepository
             ];
         } catch (\Exception $e) {
             Log::error('Error generando pagos', [
-                'error' => $e->getMessage(),
+                'error' => $e-> __toString(),
                 'employeeId' => $employeeId
             ]);
             return [
                 'status' => 500,
-                'message' => 'Error generando pago: ' . $e->getMessage()
+                'message' => 'Error generando pago: ' . $e-> __toString()
             ];
         }
     }

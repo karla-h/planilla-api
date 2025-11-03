@@ -7,6 +7,7 @@ interface IPayRollUseCase
     public function findAll($request);
     public function create($request);
     public function findBy($key);
+    public function findById($id);
     public function edit($key, $request);
     public function delete($key);
     public function findByEmployeeAndPaydate($dni, $pay_date);

@@ -8,8 +8,6 @@ use App\Http\Controllers\Auth\ProfileController;
 use App\Http\Controllers\BiweeklyPaymentController;
 use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\ContractController;
-use App\Http\Controllers\DebugPayRollController;
-use App\Http\Controllers\DebugPayRollServiceController;
 use App\Http\Controllers\DiscountPaymentController;
 use App\Http\Controllers\DiscountTypeController;
 use App\Http\Controllers\EmployeeAffiliationController;
@@ -21,18 +19,16 @@ use App\Http\Controllers\PaymentTypeController;
 use App\Http\Controllers\PayRollController;
 use App\Http\Controllers\ReportGeneratorController;
 use App\Http\Middleware\IsAdmin;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\FacadesLog;
 use Illuminate\Support\Facades\Route;
 
 // Route::post('register', [RegisteredUserController::class,'store']);
-//Route::post('login', [AuthenticatedSessionController::class,'store']);
-//Route::middleware(['auth:api'])->group(function () {
+Route::post('login', [AuthenticatedSessionController::class,'store']);
+Route::middleware(['auth:api'])->group(function () {
 Route::post('password', [NewPasswordController::class, 'store']);
 Route::post('logout', [AuthenticatedSessionController::class, 'destroy']);
 Route::get('profile', [ProfileController::class, 'store']);
 
-//Route::middleware([IsAdmin::class])->group(function () {
+Route::middleware([IsAdmin::class])->group(function () {
 Route::apiResources([
     'employees' => EmployeeController::class,
     'payment-types' => PaymentTypeController::class,
@@ -58,7 +54,6 @@ Route::post('pay-rolls/create/specific', [PayRollController::class, 'createPayro
 Route::get('report/generate', [ReportGeneratorController::class, 'generatePayRolls']);
 Route::post('biweekly-payments/report', [BiweeklyPaymentController::class, 'reportByBiweekly']);
 Route::post('campaigns/apply', [CampaignController::class, 'campaignForPayrolls']);
-//});
 
 Route::post('contracts/{id}/terminate', [ContractController::class, 'terminate']);
 Route::post('contracts/{id}/suspend', [ContractController::class, 'suspend']);
@@ -89,3 +84,6 @@ Route::post('pay-rolls/employee/{employeeId}/generate-payment', [PayRollControll
 Route::post('employee/payrolls/{dni}', [PayRollController::class, 'getEmployeePayrolls']);
 Route::post('employee/biweeks/{dni}', [PayRollController::class, 'getEmployeeBiweeks']);
 Route::post('payrolls/biweeks/{payrollId}', [PayRollController::class, 'getPayrollBiweeks']);
+
+});
+});

@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Architecture\Application\Dto\CreateEmployeeDto;
 use App\Architecture\Application\Services\EmployeeService;
 use App\Exceptions\EntityNotFoundException;
-use App\Http\Requests\EmployeeRequest;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class EmployeeController extends Controller
 {
@@ -23,12 +25,14 @@ class EmployeeController extends Controller
         }
     }
 
-    public function store(EmployeeRequest $request): JsonResponse
+    public function store(Request $request): JsonResponse
     {
         try {
-            $response = $this->service->create($request->validated());
+            $dto = $request->all();
+            $response = $this->service->create(CreateEmployeeDto::from($dto));
             return response()->json($response, $response['status']);
         } catch (\Exception $e) {
+            Log::error('Error al crear empleado: ' . $e->__toString());
             return response()->json([
                 'message' => 'Error al crear empleado'
             ], 500);
@@ -49,13 +53,14 @@ class EmployeeController extends Controller
         }
     }
 
-    public function update(EmployeeRequest $request, string $dni): JsonResponse
+    public function update(Request $request, string $dni): JsonResponse
     {
         try {
-            $response = $this->service->edit($dni, $request->validated());
+            $dto = $request->all();
+            $response = $this->service->edit($dni, CreateEmployeeDto::from($dto));
             return response()->json($response, $response['status']);
         } catch (EntityNotFoundException $e) {
-            return response()->json(['message' => $e->getMessage()], 404);
+            return response()->json(['message' => $e->__toString()], 404);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Error al actualizar empleado'

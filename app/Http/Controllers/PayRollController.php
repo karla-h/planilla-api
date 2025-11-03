@@ -32,7 +32,6 @@ class PayRollController extends Controller
 
     public function store(PayRollRequest $request): JsonResponse
     {
-
         try {
             $validatedData = $request->validated();
             $payroll = $this->service->create($validatedData);
@@ -65,16 +64,26 @@ class PayRollController extends Controller
         }
     }
 
-    public function show($dni): JsonResponse
+    // ✅ CORREGIDO: Este método ahora busca por ID de planilla, no por DNI
+    public function show($id): JsonResponse
     {
         try {
-            Log::info('PayRollController@show - Buscando planilla', ['dni' => $dni]);
-            $request = $this->service->findBy($dni);
+            Log::info('PayRollController@show - Buscando planilla por ID', ['id' => $id]);
+            
+            // Verificar si es numérico (ID) o string (DNI) para compatibilidad
+            if (is_numeric($id)) {
+                // Buscar por ID de planilla
+                $request = $this->service->findById($id);
+            } else {
+                // Buscar por DNI (mantener compatibilidad)
+                $request = $this->service->findBy($id);
+            }
+            
             return response()->json($request, $request['status']);
         } catch (\Exception $e) {
             Log::error('Error en PayRollController@show', [
                 'error' => $e->getMessage(),
-                'dni' => $dni
+                'id' => $id
             ]);
             return response()->json([
                 'message' => 'Error al obtener planilla'

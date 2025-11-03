@@ -74,4 +74,9 @@ class Employee extends Model
             ->where('start_date', '<=', now())
             ->where('end_date', '>=', now());
     }
+
+    public function getActiveContractAttribute()
+{
+    return $this->activeContract()->first();
+}
 }

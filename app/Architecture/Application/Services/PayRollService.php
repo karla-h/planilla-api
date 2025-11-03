@@ -28,6 +28,10 @@ class PayRollService implements IPayRollUseCase
     {
         return $this->repository->findBy($key);
     }
+     public function findById($id)
+    {
+        return $this->repository->findById($id);
+    }
 
     public function edit($key, $request)
     {
