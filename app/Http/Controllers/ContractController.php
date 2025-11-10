@@ -145,4 +145,14 @@ class ContractController extends Controller
             ], 500);
         }
     }
+
+public function suspendWithPeriods($id, Request $request)
+{
+    return $this->service->suspendWithPeriods($id, $request->input('suspension_periods'));
+}
+
+public function reactivate($id)
+{
+    return $this->service->reactivateContract($id);
+}
 }

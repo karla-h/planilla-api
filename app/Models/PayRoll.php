@@ -147,11 +147,6 @@ class PayRoll extends Model
         return $this->isOpen();
     }
 
-    public function getAllPermissions()
-    {
-        return $this->getPermissions()[$this->status];
-    }
-
     public function loan()
     {
         return $this->belongsTo(Loan::class);

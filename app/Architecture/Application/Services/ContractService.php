@@ -317,4 +317,71 @@ class ContractService
             ];
         }
     }
+
+    public function suspendWithPeriods($contractId, $suspensionPeriods)
+    {
+        DB::beginTransaction();
+        try {
+            $contract = $this->findBy($contractId);
+            $validatedPeriods = $this->validateSuspensionPeriods($suspensionPeriods);
+
+            $contract->update([
+                'suspension_periods' => $validatedPeriods,
+                'status_code' => 'active'
+            ]);
+
+            DB::commit();
+
+            return [
+                'status' => 200,
+                'message' => 'Suspensiones registradas exitosamente',
+                'data' => $contract
+            ];
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return ['status' => 500, 'message' => 'Error: ' . $e->getMessage()];
+        }
+    }
+
+    private function validateSuspensionPeriods($periods)
+    {
+        $validated = [];
+
+        foreach ($periods as $period) {
+            $start = \Carbon\Carbon::parse($period['start']);
+            $end = \Carbon\Carbon::parse($period['end']);
+
+            if ($start->greaterThan($end)) {
+                throw new \Exception('Fecha inicio no puede ser mayor a fecha fin');
+            }
+
+            $validated[] = [
+                'start' => $start->format('Y-m-d'),
+                'end' => $end->format('Y-m-d'),
+                'reason' => $period['reason'] ?? 'Sin motivo'
+            ];
+        }
+
+        return $validated;
+    }
+
+    public function reactivateContract($contractId)
+    {
+        DB::beginTransaction();
+        try {
+            $contract = $this->findBy($contractId);
+
+            $contract->update([
+                'suspension_periods' => null,
+                'status_code' => 'active'
+            ]);
+
+            DB::commit();
+
+            return ['status' => 200, 'message' => 'Contrato reactivado'];
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return ['status' => 500, 'message' => 'Error: ' . $e->getMessage()];
+        }
+    }
 }

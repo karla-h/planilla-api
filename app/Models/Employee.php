@@ -79,4 +79,6 @@ class Employee extends Model
 {
     return $this->activeContract()->first();
 }
+
+
 }

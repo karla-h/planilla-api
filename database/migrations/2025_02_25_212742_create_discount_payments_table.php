@@ -14,11 +14,17 @@ return new class extends Migration
             $table->integer('quantity')->default(1);
             $table->smallInteger('biweek')->nullable();
             $table->smallInteger('pay_card')->default(1);
+            $table->boolean('is_advance')->default(false);
+            $table->date('advance_date')->nullable();
+            $table->foreignId('deducted_in_biweekly_id')->nullable()
+                  ->constrained('biweekly_payments')->onDelete('set null');
+            
             $table->foreignId('discount_type_id')->constrained();
             $table->foreignId('pay_roll_id')->constrained();
             $table->timestamps();
         });
     }
+
 
     public function down(): void
     {

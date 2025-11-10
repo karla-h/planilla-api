@@ -20,6 +20,7 @@ return new class extends Migration
             $table->decimal('real_salary', 10, 2);
             $table->enum('payment_type', ['quincenal', 'mensual'])->default('quincenal');
             $table->enum('status_code', ['active', 'terminated', 'suspended'])->default('active');
+            $table->json('suspension_periods')->nullable();
             $table->foreignId('employee_id')->constrained()->onDelete('cascade');
             $table->softDeletes();
             $table->timestamps();

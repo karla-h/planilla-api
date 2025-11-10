@@ -2,6 +2,7 @@
 
 namespace App\Architecture\Application\Services;
 
+use App\Models\DiscountPayment;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
@@ -17,14 +18,12 @@ class PayrollCalculatorService
         $periodStartDate = Carbon::parse($periodStart);
         $periodEndDate = Carbon::parse($periodEnd);
 
-        // Si la fecha de contratación es después del inicio del periodo
         if ($hire->greaterThan($periodStartDate)) {
             $startDate = $hire;
         } else {
             $startDate = $periodStartDate;
         }
 
-        // Si la fecha de contratación es después del fin del periodo, no trabajó
         if ($hire->greaterThan($periodEndDate)) {
             return 0;
         }
@@ -49,8 +48,6 @@ class PayrollCalculatorService
     {
         $hire = Carbon::parse($hireDate);
         $periodStartDate = Carbon::parse($periodStart);
-
-        // Si se contrató después del inicio del periodo, necesita cálculo proporcional
         return $hire->greaterThan($periodStartDate);
     }
 
@@ -115,15 +112,14 @@ class PayrollCalculatorService
             $payCard = is_object($payment) ? $payment->pay_card : ($payment['pay_card'] ?? 1);
             $paymentBiweek = is_object($payment) ? $payment->biweek : ($payment['biweek'] ?? null);
 
-            // Verificar si aplica a esta quincena
             $appliesToBiweekly = !$paymentBiweek || $paymentBiweek == $biweekly;
 
             if ($appliesToBiweekly) {
                 $subtotal = $amount * $quantity;
 
-                if ($payCard == 1) { // Bank transfer
+                if ($payCard == 1) {
                     $bankAdditionals += $subtotal;
-                } else { // Cash
+                } else {
                     $cashAdditionals += $subtotal;
                 }
             }
@@ -162,15 +158,14 @@ class PayrollCalculatorService
             $payCard = is_object($payment) ? $payment->pay_card : ($payment['pay_card'] ?? 1);
             $paymentBiweek = is_object($payment) ? $payment->biweek : ($payment['biweek'] ?? null);
 
-            // Verificar si aplica a esta quincena
             $appliesToBiweekly = !$paymentBiweek || $paymentBiweek == $biweekly;
 
             if ($appliesToBiweekly) {
                 $subtotal = $amount * $quantity;
 
-                if ($payCard == 1) { // Bank transfer
+                if ($payCard == 1) {
                     $bankDiscounts += $subtotal;
-                } else { // Cash
+                } else {
                     $cashDiscounts += $subtotal;
                 }
             }
@@ -213,9 +208,9 @@ class PayrollCalculatorService
     }
 
     /**
-     * Calcular pagos según tipo de contrato - VERSIÓN COMPLETA CORREGIDA
+     * Calcular pagos según tipo de contrato - CORREGIDO (parámetro fix)
      */
-    public function calculatePayments($contract, $period, $additionalPayments = [], $discountPayments = [], $loan = null, $campaign = null)
+    public function calculatePayments($contract, $period, $additionalPayments = [], $discountPayments = [], $loan = null, $campaign = null, $payrollId = null)
     {
         Log::info('=== INICIANDO CÁLCULO DE PAGOS ===', [
             'period' => $period,
@@ -226,7 +221,6 @@ class PayrollCalculatorService
             'has_campaign' => $campaign ? 'Sí' : 'No'
         ]);
 
-        // Determinar si necesita cálculo proporcional
         $needsProportional = $this->needsProportionalCalculation(
             $contract->hire_date,
             $period['start'],
@@ -241,11 +235,8 @@ class PayrollCalculatorService
         );
 
         $totalDays = $period['type'] === 'mensual' ? 30 : 15;
-
-        // Determinar quincena para filtrar payments
         $biweekly = $period['type'] === 'quincena_1' ? 1 : ($period['type'] === 'quincena_2' ? 2 : null);
 
-        // Calcular payments separados por tipo
         $additionals = $this->calculateAdditionalPayments($additionalPayments, $biweekly);
         $discounts = $this->calculateDiscountPayments($discountPayments, $biweekly);
         $loanPayments = $this->calculateLoanPayments($loan, $biweekly);
@@ -264,7 +255,6 @@ class PayrollCalculatorService
         // ========== PAGOS MENSUALES ==========
         if ($period['type'] === 'mensual') {
             if ($needsProportional && $workedDays > 0) {
-                // CÁLCULO PROPORCIONAL
                 $proportionalAccounting = $this->calculateProportionalSalary($contract->accounting_salary, $workedDays, $totalDays);
                 $proportionalReal = $this->calculateProportionalSalary($contract->real_salary, $workedDays, $totalDays);
                 $diferenciaProporcional = $proportionalReal - $proportionalAccounting;
@@ -272,7 +262,6 @@ class PayrollCalculatorService
                 $bankTransfer = $proportionalAccounting + $additionals['bank'] + $campaignPayments['bank'] - $discounts['bank'] - $loanPayments['bank'];
                 $cash = $diferenciaProporcional + $additionals['cash'] + $campaignPayments['cash'] - $discounts['cash'] - $loanPayments['cash'];
             } else {
-                // CÁLCULO NORMAL
                 $diferenciaRealContable = $contract->real_salary - $contract->accounting_salary;
                 $bankTransfer = $contract->accounting_salary + $additionals['bank'] + $campaignPayments['bank'] - $discounts['bank'] - $loanPayments['bank'];
                 $cash = $diferenciaRealContable + $additionals['cash'] + $campaignPayments['cash'] - $discounts['cash'] - $loanPayments['cash'];
@@ -281,9 +270,9 @@ class PayrollCalculatorService
             $totalPago = $bankTransfer + $cash;
 
             $result = [
-                'bank_transfer' => $bankTransfer,
-                'cash' => $cash,
-                'total_pago' => $totalPago,
+                'bank_transfer' => max(0, $bankTransfer), // ✅ EVITAR VALORES NEGATIVOS
+                'cash' => max(0, $cash), // ✅ EVITAR VALORES NEGATIVOS
+                'total_pago' => max(0, $totalPago), // ✅ EVITAR VALORES NEGATIVOS
                 'worked_days' => $workedDays,
                 'total_days' => $totalDays,
                 'needs_proportional' => $needsProportional,
@@ -303,7 +292,6 @@ class PayrollCalculatorService
         // ========== PAGOS QUINCENALES ==========
         if ($period['type'] === 'quincena_1') {
             if ($needsProportional && $workedDays > 0) {
-                // CÁLCULO PROPORCIONAL para quincena 1
                 $proportionalAccounting = $this->calculateProportionalSalary($contract->accounting_salary * 0.4, $workedDays, $totalDays);
                 $diferenciaRealContable = $contract->real_salary - $contract->accounting_salary;
                 $proportionalDiferencia = $this->calculateProportionalSalary($diferenciaRealContable * 0.4, $workedDays, $totalDays);
@@ -311,7 +299,6 @@ class PayrollCalculatorService
                 $bankTransfer = $proportionalAccounting + $additionals['bank'] + $campaignPayments['bank'] - $discounts['bank'] - $loanPayments['bank'];
                 $cash = $proportionalDiferencia + $additionals['cash'] + $campaignPayments['cash'] - $discounts['cash'] - $loanPayments['cash'];
             } else {
-                // CÁLCULO NORMAL para quincena 1
                 $diferenciaRealContable = $contract->real_salary - $contract->accounting_salary;
                 $bankTransfer = ($contract->accounting_salary * 0.4) + $additionals['bank'] + $campaignPayments['bank'] - $discounts['bank'] - $loanPayments['bank'];
                 $cash = ($diferenciaRealContable * 0.4) + $additionals['cash'] + $campaignPayments['cash'] - $discounts['cash'] - $loanPayments['cash'];
@@ -319,10 +306,27 @@ class PayrollCalculatorService
 
             $totalPago = $bankTransfer + $cash;
 
+            // CALCULAR ADELANTOS
+            $advances = ['bank' => 0, 'cash' => 0, 'total' => 0];
+            if ($payrollId && $biweekly) {
+                $advances = $this->calculateAdvancePayments($payrollId, $biweekly);
+            }
+
+            // APLICAR ADELANTOS CON VALIDACIÓN
+            $finalBank = max(0, $bankTransfer - $advances['bank']); // ✅ EVITAR NEGATIVOS
+            $finalCash = max(0, $cash - $advances['cash']); // ✅ EVITAR NEGATIVOS
+
+            $warnings = [];
+            if ($bankTransfer - $advances['bank'] < 0) $warnings[] = "Adelanto mayor a transferencia bancaria";
+            if ($cash - $advances['cash'] < 0) $warnings[] = "Adelanto mayor a efectivo";
+
             $result = [
-                'bank_transfer' => $bankTransfer,
-                'cash' => $cash,
-                'total_pago' => $totalPago,
+                'bank_transfer' => $finalBank,
+                'cash' => $finalCash,
+                'total_pago' => $finalBank + $finalCash,
+                'advances_applied' => $advances['total'],
+                'advances_detail' => $advances,
+                'warnings' => $warnings,
                 'worked_days' => $workedDays,
                 'total_days' => $totalDays,
                 'needs_proportional' => $needsProportional,
@@ -342,7 +346,6 @@ class PayrollCalculatorService
         // Quincena 2
         if ($period['type'] === 'quincena_2') {
             if ($needsProportional && $workedDays > 0) {
-                // CÁLCULO PROPORCIONAL para quincena 2
                 $proportionalAccounting = $this->calculateProportionalSalary($contract->accounting_salary * 0.6, $workedDays, $totalDays);
                 $diferenciaRealContable = $contract->real_salary - $contract->accounting_salary;
                 $proportionalDiferencia = $this->calculateProportionalSalary($diferenciaRealContable * 0.6, $workedDays, $totalDays);
@@ -350,7 +353,6 @@ class PayrollCalculatorService
                 $bankTransfer = $proportionalAccounting + $additionals['bank'] + $campaignPayments['bank'] - $discounts['bank'] - $loanPayments['bank'];
                 $cash = $proportionalDiferencia + $additionals['cash'] + $campaignPayments['cash'] - $discounts['cash'] - $loanPayments['cash'];
             } else {
-                // CÁLCULO NORMAL para quincena 2
                 $diferenciaRealContable = $contract->real_salary - $contract->accounting_salary;
                 $bankTransfer = ($contract->accounting_salary * 0.6) + $additionals['bank'] + $campaignPayments['bank'] - $discounts['bank'] - $loanPayments['bank'];
                 $cash = ($diferenciaRealContable * 0.6) + $additionals['cash'] + $campaignPayments['cash'] - $discounts['cash'] - $loanPayments['cash'];
@@ -359,9 +361,9 @@ class PayrollCalculatorService
             $totalPago = $bankTransfer + $cash;
 
             $result = [
-                'bank_transfer' => $bankTransfer,
-                'cash' => $cash,
-                'total_pago' => $totalPago,
+                'bank_transfer' => max(0, $bankTransfer), // ✅ EVITAR NEGATIVOS
+                'cash' => max(0, $cash), // ✅ EVITAR NEGATIVOS
+                'total_pago' => max(0, $totalPago), // ✅ EVITAR NEGATIVOS
                 'worked_days' => $workedDays,
                 'total_days' => $totalDays,
                 'needs_proportional' => $needsProportional,
@@ -381,7 +383,6 @@ class PayrollCalculatorService
         return null;
     }
 
-    // En PayrollCalculatorService.php - agregar este método
     private function calculateCampaignPayments($campaign, $biweekly)
     {
         if (!$campaign) {
@@ -403,5 +404,24 @@ class PayrollCalculatorService
         } else {
             return ['bank' => 0, 'cash' => $amount, 'total' => $amount];
         }
+    }
+
+    private function calculateAdvancePayments($payrollId, $biweekly)
+    {
+        $advances = DiscountPayment::where('pay_roll_id', $payrollId)
+        ->where('is_advance', true)
+        ->where('biweek', $biweekly)
+        ->whereNull('deducted_in_biweekly_id')
+        ->get();
+
+    $bankAdvances = $advances->where('pay_card', 1)->sum('amount');
+    $cashAdvances = $advances->where('pay_card', 2)->sum('amount');
+
+    return [
+        'bank' => $bankAdvances,
+        'cash' => $cashAdvances,
+        'total' => $bankAdvances + $cashAdvances,
+        'details' => $advances
+    ];
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Architecture\Application\Services\PayrollCalculatorService;
 use App\Architecture\Application\Services\PayRollService;
 use App\Http\Requests\PayRollRequest;
 use Illuminate\Http\JsonResponse;
@@ -48,10 +49,7 @@ class PayRollController extends Controller
     {
         try {
             Log::info('PayRollController@update - Actualizando planilla', ['id' => $id]);
-
-            // Pasar los datos validados al service
             $payroll = $this->service->edit($id, $request->validated());
-
             return response()->json($payroll, $payroll['status']);
         } catch (\Exception $e) {
             Log::error('Error en PayRollController@update', [
@@ -64,21 +62,17 @@ class PayRollController extends Controller
         }
     }
 
-    // ✅ CORREGIDO: Este método ahora busca por ID de planilla, no por DNI
     public function show($id): JsonResponse
     {
         try {
             Log::info('PayRollController@show - Buscando planilla por ID', ['id' => $id]);
-            
-            // Verificar si es numérico (ID) o string (DNI) para compatibilidad
+
             if (is_numeric($id)) {
-                // Buscar por ID de planilla
                 $request = $this->service->findById($id);
             } else {
-                // Buscar por DNI (mantener compatibilidad)
                 $request = $this->service->findBy($id);
             }
-            
+
             return response()->json($request, $request['status']);
         } catch (\Exception $e) {
             Log::error('Error en PayRollController@show', [
@@ -168,7 +162,6 @@ class PayRollController extends Controller
         }
     }
 
-    // Métodos de gestión de estados
     public function openPayroll($id): JsonResponse
     {
         try {
@@ -290,7 +283,6 @@ class PayRollController extends Controller
 
     public function generatePayment(Request $request, $employeeId): JsonResponse
     {
-        // Este método RECIBE la request y llama al service
         $year = $request->input('year', now()->year);
         $month = $request->input('month', now()->month);
         $biweekly = $request->input('biweekly', null);
@@ -349,6 +341,194 @@ class PayRollController extends Controller
             return response()->json([
                 'status' => 500,
                 'message' => 'Error al obtener quincenas de la planilla: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function generateMassPayrolls(Request $request): JsonResponse
+    {
+        try {
+            Log::info('PayRollController@generateMassPayrolls - Generación masiva', $request->all());
+
+            $filters = [
+                'headquarter_id' => $request->input('headquarter_id'),
+                'payment_type' => $request->input('payment_type'),
+                'employee_ids' => $request->input('employee_ids', []),
+                'dni_list' => $request->input('dni_list', []),
+                'month' => $request->input('month', now()->month),
+                'year' => $request->input('year', now()->year)
+            ];
+
+            $response = $this->service->generateMassPayrolls($filters);
+            return response()->json($response, $response['status']);
+        } catch (\Exception $e) {
+            Log::error('Error en PayRollController@generateMassPayrolls', [
+                'error' => $e->getMessage(),
+                'request' => $request->all()
+            ]);
+            return response()->json([
+                'message' => 'Error en generación masiva de planillas'
+            ], 500);
+        }
+    }
+
+ public function generateMassBiweeklyPayments(Request $request)
+    {
+        try {
+            Log::info("🎯 Generando pagos masivos desde PayRollController", $request->all());
+
+            $validated = $request->validate([
+                'biweekly' => 'required|integer|in:1,2',
+                'year' => 'required|integer|min:2020|max:2030',
+                'month' => 'required|integer|min:1|max:12',
+                'headquarter_id' => 'nullable|integer|exists:headquarters,id',
+                'payroll_ids' => 'nullable|array',
+                'payroll_ids.*' => 'integer|exists:pay_rolls,id',
+                'force_regenerate' => 'boolean',
+                'payment_type' => 'nullable|in:quincenal,mensual'
+            ]);
+
+            $result = $this->service->generateMassBiweeklyPayments($validated);
+
+            Log::info("✅ Resultado desde service:", [
+                'status' => $result['status'] ?? 'unknown',
+                'message' => $result['message'] ?? 'No message'
+            ]);
+
+            return response()->json($result, $result['status'] ?? 500);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::error("❌ Validación fallida:", $e->errors());
+            return response()->json([
+                'status' => 400,
+                'message' => 'Datos de entrada inválidos',
+                'errors' => $e->errors()
+            ], 400);
+            
+        } catch (\Exception $e) {
+            Log::error('❌ Error en generateMassBiweeklyPayments controller: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
+            
+            return response()->json([
+                'status' => 500,
+                'message' => 'Error interno del servidor: ' . $e->getMessage(),
+                'data' => [
+                    'success' => [],
+                    'errors' => [$e->getMessage()],
+                    'summary' => [
+                        'total_processed' => 0,
+                        'successful' => 0,
+                        'failed' => 1,
+                        'by_payment_type' => [
+                            'quincenal' => 0,
+                            'mensual' => 0
+                        ]
+                    ]
+                ]
+            ], 500);
+        }
+    }
+
+    public function getPayrollsStatusByMonth(Request $request): JsonResponse
+    {
+        try {
+            Log::info('PayRollController@getPayrollsStatusByMonth - Obteniendo estado de planillas', $request->all());
+
+            $year = $request->input('year', now()->year);
+            $month = $request->input('month', now()->month);
+
+            $response = $this->service->getPayrollsStatusByMonth($year, $month);
+            return response()->json($response, $response['status']);
+        } catch (\Exception $e) {
+            Log::error('Error en PayRollController@getPayrollsStatusByMonth', [
+                'error' => $e->getMessage(),
+                'request' => $request->all()
+            ]);
+            return response()->json([
+                'message' => 'Error obteniendo estado de planillas'
+            ], 500);
+        }
+    }
+
+    public function canEditPayroll($id): JsonResponse
+    {
+        $response = $this->service->checkEditPermissions($id);
+        return response()->json($response, $response['status'] ?? 200);
+    }
+
+    public function canEditBiweekly($id, $biweekly): JsonResponse
+    {
+        $response = $this->service->checkEditPermissions($id, $biweekly);
+        return response()->json($response, $response['status'] ?? 200);
+    }
+
+    public function createAdvance(Request $request, $id): JsonResponse
+    {
+        $response = $this->service->createAdvance($id, $request->all());
+        return response()->json($response, $response['status']);
+    }
+
+    public function getMaxAdvance($id, $biweekly): JsonResponse
+    {
+        $response = $this->service->getMaxAdvance($id, $biweekly);
+        return response()->json($response, $response['status']);
+    }
+
+    public function getMaxAdvanceByMethod(Request $request, $id, $biweekly): JsonResponse
+    {
+        $payCard = $request->input('pay_card');
+        $response = $this->service->getMaxAdvance($id, $biweekly, $payCard);
+        return response()->json($response, $response['status']);
+    }
+
+    public function addPayment(Request $request, $id, $type, $biweekly): JsonResponse
+    {
+        $response = $this->service->addPaymentToPayroll($id, $type, $request->all(), $biweekly);
+        return response()->json($response, $response['status']);
+    }
+
+    public function editPayment(Request $request, $id, $type, $paymentId, $biweekly): JsonResponse
+    {
+        $response = $this->service->editPayment($id, $type, $paymentId, $request->all(), $biweekly);
+        return response()->json($response, $response['status']);
+    }
+
+    public function deletePayment($id, $type, $paymentId, $biweekly): JsonResponse
+    {
+        $response = $this->service->deletePayment($id, $type, $paymentId, $biweekly);
+        return response()->json($response, $response['status']);
+    }
+
+    public function reopenPayroll($id): JsonResponse
+    {
+        $response = $this->service->reopenPayroll($id);
+        return response()->json($response, $response['status']);
+    }
+
+    public function previewPayment(Request $request, $employeeId)
+    {
+        try {
+            $request->validate([
+                'year' => 'required|integer',
+                'month' => 'required|integer|between:1,12',
+                'biweekly' => 'sometimes|integer|in:1,2'
+            ]);
+
+            // ✅ Llamada directa al servicio inyectado
+            $result = $this->service->previewPayment(
+                $employeeId,
+                $request->year,
+                $request->month,
+                $request->biweekly,
+                $request->additional_payments ?? [],
+                $request->discount_payments ?? []
+            );
+
+            return response()->json($result, $result['status']);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 500,
+                'message' => 'Error: ' . $e->getMessage()
             ], 500);
         }
     }
